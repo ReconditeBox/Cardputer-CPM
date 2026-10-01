@@ -2,8 +2,7 @@
 #define CARDPUTER_ADV_H
 
 /*
- * RunCPM hardware definition
- * M5Stack Cardputer Adv
+ * RunCPM hardware definition for M5Stack Cardputer Adv
  *
  * microSD:
  *   SCK  = GPIO 40
@@ -18,29 +17,19 @@ SdFat SD;
 #define SDMHZ 20
 #define SDINIT 12, SD_SCK_MHZ(SDMHZ)
 
-/*
- * RunCPM's standard Arduino abstraction expects an
- * activity LED to exist.
- *
- * We do not want to assign real Cardputer hardware
- * to this yet, so 255 acts as a compile-time dummy.
- *
- * This will be removed when we write the proper
- * Cardputer abstraction layer.
- */
-#define LED 255
-#define LEDinv 0
-
 #define BOARD "M5Stack Cardputer Adv"
 
 #define board_esp32
 #define board_digital_io
 
-
 /*
- * ESP32-specific custom BDOS hook.
- * No Cardputer-specific functions yet.
+ * Temporary RunCPM activity output.
+ * GPIO2 is exposed on the Cardputer expansion connector and
+ * is unused by our present setup.
  */
+#define LED 2
+#define LEDinv 0
+
 uint8 esp32bdos(uint16 dmaaddr)
 {
     (void)dmaaddr;
