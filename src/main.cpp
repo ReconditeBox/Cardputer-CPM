@@ -2,10 +2,6 @@
 #include <M5Cardputer.h>
 #include <string.h>
 
-/*
- * Arduino ESP32 defines NOP() itself.
- * RunCPM uses NOP as Z80 opcode 00h.
- */
 #ifdef NOP
 #undef NOP
 #endif
@@ -25,12 +21,8 @@
 
 
 /*
- * ----------------------------------------------------
- * Rename RunCPM's Serial console functions.
- * We provide Cardputer-native replacements below.
- * ----------------------------------------------------
+ * Rename RunCPM's original Serial console functions.
  */
-
 #define _kbhit  _serial_kbhit
 #define _getch  _serial_getch
 #define _getche _serial_getche
@@ -48,20 +40,8 @@
 
 /*
  * ====================================================
- * Cardputer local terminal
+ * LOCAL CARDPUTER TERMINAL
  * ====================================================
- *
- * Native display: 240 x 135
- *
- * Default 6 x 8 font:
- *
- *     40 columns
- *     16 rows
- *
- * 40 * 6 = 240
- * 16 * 8 = 128
- *
- * The remaining pixels at the bottom are unused.
  */
 
 #define TERM_COLS 40
@@ -82,7 +62,7 @@ static int savedCursorY = 0;
 
 
 /*
- * ANSI parser states.
+ * ANSI parser.
  */
 enum
 {
@@ -98,15 +78,25 @@ static int ansiParamIndex = 0;
 
 
 /*
- * Keyboard buffer.
+ * Shared CP/M keyboard buffer.
+ *
+ * Both the Cardputer keyboard and USB CDC
+ * put characters into this buffer.
  */
-static uint8_t keyBuffer[64];
+static uint8_t keyBuffer[128];
 static uint8_t keyHead = 0;
 static uint8_t keyTail = 0;
 
 
 /*
- * Forward declarations required by C++.
+ * Used to avoid converting CR/LF from a PC terminal
+ * into two separate CP/M Enter presses.
+ */
+static bool lastUSBWasCR = false;
+
+
+/*
+ * Forward declarations.
  */
 int _kbhit(void);
 uint8 _getch(void);
@@ -155,10 +145,12 @@ static void terminalRenderCell(
     int row
 )
 {
-    if (col < 0 ||
+    if (
+        col < 0 ||
         col >= TERM_COLS ||
         row < 0 ||
-        row >= TERM_ROWS)
+        row >= TERM_ROWS
+    )
     {
         return;
     }
@@ -199,7 +191,6 @@ static void terminalClearBuffer()
 static void terminalInit()
 {
     M5Cardputer.Display.setRotation(1);
-
     M5Cardputer.Display.fillScreen(BLACK);
 
     terminal.setColorDepth(8);
@@ -217,10 +208,6 @@ static void terminalInit()
     );
 
     terminal.setTextSize(1);
-
-    /*
-     * We do our own wrapping.
-     */
     terminal.setTextWrap(false);
 
     cursorX = 0;
@@ -284,7 +271,7 @@ static void terminalCheckCursor()
 
 /*
  * ====================================================
- * TERMINAL CHARACTER OPERATIONS
+ * CHARACTER OPERATIONS
  * ====================================================
  */
 
@@ -354,26 +341,8 @@ static void terminalTab()
 
 /*
  * ====================================================
- * ANSI / VT100 SUPPORT
+ * ANSI / VT100
  * ====================================================
- *
- * Implemented:
- *
- * ESC [ A     cursor up
- * ESC [ B     cursor down
- * ESC [ C     cursor right
- * ESC [ D     cursor left
- *
- * ESC [ H     cursor position
- * ESC [ f     cursor position
- *
- * ESC [ J     erase display
- * ESC [ K     erase line
- *
- * ESC [ s     save cursor
- * ESC [ u     restore cursor
- *
- * SGR (ESC [ ... m) is accepted and ignored for now.
  */
 
 static int ansiGetParam(
@@ -433,9 +402,6 @@ static void terminalEraseLine(int mode)
 {
     if (mode == 0)
     {
-        /*
-         * Cursor to end.
-         */
         for (
             int col = cursorX;
             col < TERM_COLS;
@@ -447,9 +413,6 @@ static void terminalEraseLine(int mode)
     }
     else if (mode == 1)
     {
-        /*
-         * Start to cursor.
-         */
         for (
             int col = 0;
             col <= cursorX &&
@@ -462,9 +425,6 @@ static void terminalEraseLine(int mode)
     }
     else if (mode == 2)
     {
-        /*
-         * Entire line.
-         */
         for (int col = 0; col < TERM_COLS; col++)
         {
             termBuffer[cursorY][col] = ' ';
@@ -481,9 +441,6 @@ static void ansiExecute(uint8_t command)
 
     switch (command)
     {
-        /*
-         * Cursor up.
-         */
         case 'A':
 
             amount = ansiGetParam(0, 1);
@@ -496,9 +453,6 @@ static void ansiExecute(uint8_t command)
             break;
 
 
-        /*
-         * Cursor down.
-         */
         case 'B':
 
             amount = ansiGetParam(0, 1);
@@ -511,9 +465,6 @@ static void ansiExecute(uint8_t command)
             break;
 
 
-        /*
-         * Cursor right.
-         */
         case 'C':
 
             amount = ansiGetParam(0, 1);
@@ -526,9 +477,6 @@ static void ansiExecute(uint8_t command)
             break;
 
 
-        /*
-         * Cursor left.
-         */
         case 'D':
 
             amount = ansiGetParam(0, 1);
@@ -541,13 +489,6 @@ static void ansiExecute(uint8_t command)
             break;
 
 
-        /*
-         * Cursor position.
-         *
-         * ANSI positions are 1 based:
-         *
-         * ESC [ row ; column H
-         */
         case 'H':
         case 'f':
         {
@@ -576,9 +517,6 @@ static void ansiExecute(uint8_t command)
         }
 
 
-        /*
-         * Erase display.
-         */
         case 'J':
         {
             int mode = ansiParam[0];
@@ -605,9 +543,6 @@ static void ansiExecute(uint8_t command)
         }
 
 
-        /*
-         * Erase line.
-         */
         case 'K':
 
             terminalEraseLine(
@@ -617,9 +552,6 @@ static void ansiExecute(uint8_t command)
             break;
 
 
-        /*
-         * Save cursor.
-         */
         case 's':
 
             savedCursorX = cursorX;
@@ -628,9 +560,6 @@ static void ansiExecute(uint8_t command)
             break;
 
 
-        /*
-         * Restore cursor.
-         */
         case 'u':
 
             cursorX = savedCursorX;
@@ -642,10 +571,8 @@ static void ansiExecute(uint8_t command)
 
 
         /*
-         * Select Graphic Rendition.
-         *
-         * At present we deliberately ignore colours
-         * and attributes while accepting the sequence.
+         * Colour/attribute selection is accepted
+         * but ignored locally for now.
          */
         case 'm':
 
@@ -668,19 +595,12 @@ static void ansiBeginCSI()
     );
 
     ansiParamIndex = 0;
-
     ansiState = ANSI_CSI;
 }
 
 
 static void terminalProcessCharacter(uint8_t ch)
 {
-    /*
-     * ---------------------------
-     * ESCAPE STATE
-     * ---------------------------
-     */
-
     if (ansiState == ANSI_ESC)
     {
         ansiState = ANSI_NORMAL;
@@ -691,9 +611,6 @@ static void terminalProcessCharacter(uint8_t ch)
             return;
         }
 
-        /*
-         * ANSI save/restore cursor.
-         */
         if (ch == '7')
         {
             savedCursorX = cursorX;
@@ -707,13 +624,9 @@ static void terminalProcessCharacter(uint8_t ch)
             cursorY = savedCursorY;
 
             terminalCheckCursor();
-
             return;
         }
 
-        /*
-         * ESC c = reset terminal.
-         */
         if (ch == 'c')
         {
             _clrscr();
@@ -723,12 +636,6 @@ static void terminalProcessCharacter(uint8_t ch)
         return;
     }
 
-
-    /*
-     * ---------------------------
-     * CSI STATE
-     * ---------------------------
-     */
 
     if (ansiState == ANSI_CSI)
     {
@@ -751,9 +658,6 @@ static void terminalProcessCharacter(uint8_t ch)
             return;
         }
 
-        /*
-         * Ignore ANSI private-mode markers such as '?'.
-         */
         if (ch == '?')
         {
             return;
@@ -767,12 +671,6 @@ static void terminalProcessCharacter(uint8_t ch)
     }
 
 
-    /*
-     * ---------------------------
-     * NORMAL STATE
-     * ---------------------------
-     */
-
     if (ch == 0x1B)
     {
         ansiState = ANSI_ESC;
@@ -780,9 +678,6 @@ static void terminalProcessCharacter(uint8_t ch)
     }
 
 
-    /*
-     * Form feed.
-     */
     if (ch == 0x0C)
     {
         _clrscr();
@@ -790,9 +685,6 @@ static void terminalProcessCharacter(uint8_t ch)
     }
 
 
-    /*
-     * Carriage return.
-     */
     if (ch == 0x0D)
     {
         terminalCR();
@@ -800,9 +692,6 @@ static void terminalProcessCharacter(uint8_t ch)
     }
 
 
-    /*
-     * Line feed.
-     */
     if (ch == 0x0A)
     {
         terminalLF();
@@ -810,9 +699,6 @@ static void terminalProcessCharacter(uint8_t ch)
     }
 
 
-    /*
-     * Backspace.
-     */
     if (ch == 0x08)
     {
         terminalBackspace();
@@ -820,9 +706,6 @@ static void terminalProcessCharacter(uint8_t ch)
     }
 
 
-    /*
-     * Tab.
-     */
     if (ch == 0x09)
     {
         terminalTab();
@@ -830,20 +713,12 @@ static void terminalProcessCharacter(uint8_t ch)
     }
 
 
-    /*
-     * Bell.
-     *
-     * Ignore for the moment.
-     */
     if (ch == 0x07)
     {
         return;
     }
 
 
-    /*
-     * Printable characters.
-     */
     if (ch >= 0x20)
     {
         terminalPutPrintable(ch);
@@ -853,7 +728,7 @@ static void terminalProcessCharacter(uint8_t ch)
 
 /*
  * ====================================================
- * KEYBOARD
+ * INPUT BUFFER
  * ====================================================
  */
 
@@ -865,9 +740,6 @@ static void queueKey(uint8_t ch)
 
     if (next == keyTail)
     {
-        /*
-         * Buffer full.
-         */
         return;
     }
 
@@ -877,7 +749,13 @@ static void queueKey(uint8_t ch)
 }
 
 
-static void pollKeyboard()
+/*
+ * ====================================================
+ * CARDPUTER KEYBOARD INPUT
+ * ====================================================
+ */
+
+static void pollCardputerKeyboard()
 {
     M5Cardputer.update();
 
@@ -892,23 +770,11 @@ static void pollKeyboard()
         M5Cardputer.Keyboard.keysState();
 
 
-    /*
-     * Normal printable keyboard input.
-     */
     for (auto c : status.word)
     {
         uint8_t ch = (uint8_t)c;
 
 
-        /*
-         * Ctrl+A through Ctrl+Z.
-         *
-         * ASCII control characters are:
-         *
-         * Ctrl+A = 01h
-         * ...
-         * Ctrl+Z = 1Ah
-         */
         if (status.ctrl)
         {
             if (ch >= 'a' && ch <= 'z')
@@ -937,18 +803,12 @@ static void pollKeyboard()
     }
 
 
-    /*
-     * CP/M expects carriage return from Enter.
-     */
     if (status.enter)
     {
         queueKey(0x0D);
     }
 
 
-    /*
-     * CP/M conventionally uses BS for erase.
-     */
     if (
         status.backspace ||
         status.del
@@ -973,13 +833,94 @@ static void pollKeyboard()
 
 /*
  * ====================================================
- * RunCPM CONSOLE FUNCTIONS
+ * USB CDC INPUT
+ * ====================================================
+ */
+
+static void pollUSBKeyboard()
+{
+    while (Serial.available())
+    {
+        int value = Serial.read();
+
+        if (value < 0)
+            break;
+
+
+        uint8_t ch =
+            (uint8_t)value;
+
+
+        /*
+         * DEL from PC terminals becomes CP/M BS.
+         */
+        if (ch == 0x7F)
+        {
+            ch = 0x08;
+        }
+
+
+        /*
+         * Normalise terminal Enter handling.
+         *
+         * CR       -> CR
+         * LF       -> CR
+         * CR + LF  -> one CR only
+         */
+        if (ch == 0x0D)
+        {
+            queueKey(0x0D);
+
+            lastUSBWasCR = true;
+
+            continue;
+        }
+
+
+        if (ch == 0x0A)
+        {
+            if (!lastUSBWasCR)
+            {
+                queueKey(0x0D);
+            }
+
+            lastUSBWasCR = false;
+
+            continue;
+        }
+
+
+        lastUSBWasCR = false;
+
+
+        /*
+         * Everything else passes directly to CP/M,
+         * including Ctrl+C, ESC, TAB etc.
+         */
+        queueKey(ch);
+    }
+}
+
+
+/*
+ * Poll every available console input source.
+ */
+static void pollInputs()
+{
+    pollCardputerKeyboard();
+    pollUSBKeyboard();
+}
+
+
+/*
+ * ====================================================
+ * RunCPM CONSOLE
  * ====================================================
  */
 
 int _kbhit(void)
 {
-    pollKeyboard();
+    pollInputs();
 
     return (
         keyHead != keyTail
@@ -993,7 +934,7 @@ uint8 _getch(void)
         keyHead == keyTail
     )
     {
-        pollKeyboard();
+        pollInputs();
 
         delay(1);
     }
@@ -1025,7 +966,16 @@ uint8 _getche(void)
 
 void _putch(uint8 ch)
 {
+    /*
+     * Native Cardputer console.
+     */
     terminalProcessCharacter(ch);
+
+
+    /*
+     * Exact same CP/M output also goes to USB.
+     */
+    Serial.write(ch);
 }
 
 
@@ -1044,7 +994,7 @@ void _clrscr(void)
 
 /*
  * ====================================================
- * RunCPM PUN: and LST:
+ * PUN: AND LST:
  * ====================================================
  */
 
@@ -1093,7 +1043,16 @@ int lst_open = FALSE;
 void setup()
 {
     /*
-     * Start the Cardputer.
+     * ESP32-S3 native USB CDC.
+     *
+     * Do not wait for a PC.
+     * CP/M remains a standalone Cardputer system.
+     */
+    Serial.begin();
+
+
+    /*
+     * Cardputer hardware.
      */
     auto cfg =
         M5.config();
@@ -1105,7 +1064,7 @@ void setup()
 
 
     /*
-     * Start the local terminal.
+     * Native local terminal.
      */
     terminalInit();
 
@@ -1118,7 +1077,9 @@ void setup()
         "--------------\r\n"
     );
 
-    _puts("\r\n");
+    _puts(
+        "\r\n"
+    );
 
 
     /*
@@ -1205,9 +1166,6 @@ void setup()
 #endif
 
 
-    /*
-     * Check CCP.
-     */
     if (!(
         VersionCCP >= 0x10 ||
         SD.exists(CCPname)
@@ -1380,15 +1338,9 @@ void setup()
 }
 
 
-/*
- * Usually CP/M remains inside setup().
- *
- * If it exits, continue servicing the
- * Cardputer keyboard.
- */
 void loop()
 {
-    pollKeyboard();
+    pollInputs();
 
     delay(5);
 }
