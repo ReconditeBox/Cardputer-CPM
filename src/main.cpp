@@ -21,8 +21,11 @@
 
 
 /*
- * Rename RunCPM's original Serial console functions.
+ * ====================================================
+ * Rename RunCPM's original serial console functions.
+ * ====================================================
  */
+
 #define _kbhit  _serial_kbhit
 #define _getch  _serial_getch
 #define _getche _serial_getche
@@ -40,7 +43,30 @@
 
 /*
  * ====================================================
- * LOCAL CARDPUTER TERMINAL
+ * Cardputer console router
+ * ====================================================
+ */
+
+enum CardConsoleMode
+{
+    CARD_CONSOLE_LOCAL = 0,
+    CARD_CONSOLE_USB   = 1,
+    CARD_CONSOLE_BOTH  = 2
+};
+
+/*
+ * IMPORTANT:
+ *
+ * RunCPM itself already has a variable called
+ * consoleMode, so ours deliberately has a different name.
+ */
+static uint8_t cardConsoleMode =
+    CARD_CONSOLE_LOCAL;
+
+
+/*
+ * ====================================================
+ * Local Cardputer terminal
  * ====================================================
  */
 
@@ -64,6 +90,7 @@ static int savedCursorY = 0;
 /*
  * ANSI parser.
  */
+
 enum
 {
     ANSI_NORMAL,
@@ -78,47 +105,106 @@ static int ansiParamIndex = 0;
 
 
 /*
- * Shared CP/M keyboard buffer.
- *
- * Both the Cardputer keyboard and USB CDC
- * put characters into this buffer.
+ * Input queue.
  */
+
 static uint8_t keyBuffer[128];
+
 static uint8_t keyHead = 0;
 static uint8_t keyTail = 0;
 
-
-/*
- * Used to avoid converting CR/LF from a PC terminal
- * into two separate CP/M Enter presses.
- */
 static bool lastUSBWasCR = false;
 
 
 /*
  * Forward declarations.
  */
+
 int _kbhit(void);
 uint8 _getch(void);
 uint8 _getche(void);
 void _putch(uint8 ch);
 void _clrscr(void);
 
+static void setCardConsoleMode(uint8_t mode);
+
 
 /*
  * ====================================================
- * DISPLAY
+ * Console routing helpers
+ * ====================================================
+ */
+
+static bool localOutputEnabled()
+{
+    return (
+        cardConsoleMode == CARD_CONSOLE_LOCAL ||
+        cardConsoleMode == CARD_CONSOLE_BOTH
+    );
+}
+
+
+static bool localInputEnabled()
+{
+    return (
+        cardConsoleMode == CARD_CONSOLE_LOCAL ||
+        cardConsoleMode == CARD_CONSOLE_BOTH
+    );
+}
+
+
+static bool usbOutputEnabled()
+{
+    return (
+        cardConsoleMode == CARD_CONSOLE_USB ||
+        cardConsoleMode == CARD_CONSOLE_BOTH
+    );
+}
+
+
+static bool usbInputEnabled()
+{
+    return (
+        cardConsoleMode == CARD_CONSOLE_USB ||
+        cardConsoleMode == CARD_CONSOLE_BOTH
+    );
+}
+
+
+/*
+ * ====================================================
+ * Local display
  * ====================================================
  */
 
 static void terminalPush()
 {
-    terminal.pushSprite(0, 0);
+    if (localOutputEnabled())
+    {
+        terminal.pushSprite(0, 0);
+    }
 }
 
 
-static void terminalRenderAll()
+static void terminalClearBuffer()
 {
+    for (int row = 0; row < TERM_ROWS; row++)
+    {
+        for (int col = 0; col < TERM_COLS; col++)
+        {
+            termBuffer[row][col] = ' ';
+        }
+    }
+}
+
+
+static void terminalRenderAll(bool force = false)
+{
+    if (!force && !localOutputEnabled())
+    {
+        return;
+    }
+
     terminal.fillSprite(BLACK);
 
     for (int row = 0; row < TERM_ROWS; row++)
@@ -136,7 +222,7 @@ static void terminalRenderAll()
         }
     }
 
-    terminalPush();
+    terminal.pushSprite(0, 0);
 }
 
 
@@ -145,6 +231,11 @@ static void terminalRenderCell(
     int row
 )
 {
+    if (!localOutputEnabled())
+    {
+        return;
+    }
+
     if (
         col < 0 ||
         col >= TERM_COLS ||
@@ -172,25 +263,14 @@ static void terminalRenderCell(
         (uint8_t)termBuffer[row][col]
     );
 
-    terminalPush();
-}
-
-
-static void terminalClearBuffer()
-{
-    for (int row = 0; row < TERM_ROWS; row++)
-    {
-        for (int col = 0; col < TERM_COLS; col++)
-        {
-            termBuffer[row][col] = ' ';
-        }
-    }
+    terminal.pushSprite(0, 0);
 }
 
 
 static void terminalInit()
 {
     M5Cardputer.Display.setRotation(1);
+
     M5Cardputer.Display.fillScreen(BLACK);
 
     terminal.setColorDepth(8);
@@ -216,13 +296,13 @@ static void terminalInit()
     ansiState = ANSI_NORMAL;
 
     terminalClearBuffer();
-    terminalRenderAll();
+    terminalRenderAll(true);
 }
 
 
 /*
  * ====================================================
- * SCROLLING
+ * Scrolling
  * ====================================================
  */
 
@@ -251,7 +331,9 @@ static void terminalScroll()
 static void terminalCheckCursor()
 {
     if (cursorX < 0)
+    {
         cursorX = 0;
+    }
 
     if (cursorX >= TERM_COLS)
     {
@@ -260,7 +342,9 @@ static void terminalCheckCursor()
     }
 
     if (cursorY < 0)
+    {
         cursorY = 0;
+    }
 
     if (cursorY >= TERM_ROWS)
     {
@@ -271,7 +355,7 @@ static void terminalCheckCursor()
 
 /*
  * ====================================================
- * CHARACTER OPERATIONS
+ * Character operations
  * ====================================================
  */
 
@@ -279,7 +363,8 @@ static void terminalPutPrintable(uint8_t ch)
 {
     terminalCheckCursor();
 
-    termBuffer[cursorY][cursorX] = (char)ch;
+    termBuffer[cursorY][cursorX] =
+        (char)ch;
 
     terminalRenderCell(
         cursorX,
@@ -341,7 +426,7 @@ static void terminalTab()
 
 /*
  * ====================================================
- * ANSI / VT100
+ * ANSI support
  * ====================================================
  */
 
@@ -351,10 +436,14 @@ static int ansiGetParam(
 )
 {
     if (index > ansiParamIndex)
+    {
         return defaultValue;
+    }
 
     if (ansiParam[index] == 0)
+    {
         return defaultValue;
+    }
 
     return ansiParam[index];
 }
@@ -362,14 +451,22 @@ static int ansiGetParam(
 
 static void terminalClearToEnd()
 {
-    for (int row = cursorY; row < TERM_ROWS; row++)
+    for (
+        int row = cursorY;
+        row < TERM_ROWS;
+        row++
+    )
     {
         int start =
             (row == cursorY)
                 ? cursorX
                 : 0;
 
-        for (int col = start; col < TERM_COLS; col++)
+        for (
+            int col = start;
+            col < TERM_COLS;
+            col++
+        )
         {
             termBuffer[row][col] = ' ';
         }
@@ -381,14 +478,22 @@ static void terminalClearToEnd()
 
 static void terminalClearFromStart()
 {
-    for (int row = 0; row <= cursorY; row++)
+    for (
+        int row = 0;
+        row <= cursorY;
+        row++
+    )
     {
         int end =
             (row == cursorY)
                 ? cursorX
                 : TERM_COLS - 1;
 
-        for (int col = 0; col <= end; col++)
+        for (
+            int col = 0;
+            col <= end;
+            col++
+        )
         {
             termBuffer[row][col] = ' ';
         }
@@ -425,7 +530,11 @@ static void terminalEraseLine(int mode)
     }
     else if (mode == 2)
     {
-        for (int col = 0; col < TERM_COLS; col++)
+        for (
+            int col = 0;
+            col < TERM_COLS;
+            col++
+        )
         {
             termBuffer[cursorY][col] = ' ';
         }
@@ -443,48 +552,62 @@ static void ansiExecute(uint8_t command)
     {
         case 'A':
 
-            amount = ansiGetParam(0, 1);
+            amount =
+                ansiGetParam(0, 1);
 
             cursorY -= amount;
 
             if (cursorY < 0)
+            {
                 cursorY = 0;
+            }
 
             break;
 
 
         case 'B':
 
-            amount = ansiGetParam(0, 1);
+            amount =
+                ansiGetParam(0, 1);
 
             cursorY += amount;
 
             if (cursorY >= TERM_ROWS)
-                cursorY = TERM_ROWS - 1;
+            {
+                cursorY =
+                    TERM_ROWS - 1;
+            }
 
             break;
 
 
         case 'C':
 
-            amount = ansiGetParam(0, 1);
+            amount =
+                ansiGetParam(0, 1);
 
             cursorX += amount;
 
             if (cursorX >= TERM_COLS)
-                cursorX = TERM_COLS - 1;
+            {
+                cursorX =
+                    TERM_COLS - 1;
+            }
 
             break;
 
 
         case 'D':
 
-            amount = ansiGetParam(0, 1);
+            amount =
+                ansiGetParam(0, 1);
 
             cursorX -= amount;
 
             if (cursorX < 0)
+            {
                 cursorX = 0;
+            }
 
             break;
 
@@ -502,16 +625,26 @@ static void ansiExecute(uint8_t command)
             cursorX = col - 1;
 
             if (cursorY < 0)
+            {
                 cursorY = 0;
+            }
 
             if (cursorY >= TERM_ROWS)
-                cursorY = TERM_ROWS - 1;
+            {
+                cursorY =
+                    TERM_ROWS - 1;
+            }
 
             if (cursorX < 0)
+            {
                 cursorX = 0;
+            }
 
             if (cursorX >= TERM_COLS)
-                cursorX = TERM_COLS - 1;
+            {
+                cursorX =
+                    TERM_COLS - 1;
+            }
 
             break;
         }
@@ -519,7 +652,8 @@ static void ansiExecute(uint8_t command)
 
         case 'J':
         {
-            int mode = ansiParam[0];
+            int mode =
+                ansiParam[0];
 
             if (mode == 2)
             {
@@ -570,10 +704,6 @@ static void ansiExecute(uint8_t command)
             break;
 
 
-        /*
-         * Colour/attribute selection is accepted
-         * but ignored locally for now.
-         */
         case 'm':
 
             break;
@@ -595,11 +725,14 @@ static void ansiBeginCSI()
     );
 
     ansiParamIndex = 0;
+
     ansiState = ANSI_CSI;
 }
 
 
-static void terminalProcessCharacter(uint8_t ch)
+static void terminalProcessCharacter(
+    uint8_t ch
+)
 {
     if (ansiState == ANSI_ESC)
     {
@@ -624,12 +757,19 @@ static void terminalProcessCharacter(uint8_t ch)
             cursorY = savedCursorY;
 
             terminalCheckCursor();
+
             return;
         }
 
         if (ch == 'c')
         {
-            _clrscr();
+            terminalClearBuffer();
+
+            cursorX = 0;
+            cursorY = 0;
+
+            terminalRenderAll();
+
             return;
         }
 
@@ -642,8 +782,12 @@ static void terminalProcessCharacter(uint8_t ch)
         if (ch >= '0' && ch <= '9')
         {
             ansiParam[ansiParamIndex] =
-                (ansiParam[ansiParamIndex] * 10)
-                + (ch - '0');
+                (
+                    ansiParam[ansiParamIndex] *
+                    10
+                )
+                +
+                (ch - '0');
 
             return;
         }
@@ -680,7 +824,13 @@ static void terminalProcessCharacter(uint8_t ch)
 
     if (ch == 0x0C)
     {
-        _clrscr();
+        terminalClearBuffer();
+
+        cursorX = 0;
+        cursorY = 0;
+
+        terminalRenderAll();
+
         return;
     }
 
@@ -728,7 +878,7 @@ static void terminalProcessCharacter(uint8_t ch)
 
 /*
  * ====================================================
- * INPUT BUFFER
+ * Input queue
  * ====================================================
  */
 
@@ -751,7 +901,174 @@ static void queueKey(uint8_t ch)
 
 /*
  * ====================================================
- * CARDPUTER KEYBOARD INPUT
+ * USB status screen
+ * ====================================================
+ */
+
+static void showUSBStatus()
+{
+    M5Cardputer.Display.fillScreen(
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextColor(
+        GREEN,
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextSize(1);
+
+    M5Cardputer.Display.setCursor(
+        0,
+        0
+    );
+
+    M5Cardputer.Display.println(
+        "CP/M USB CONSOLE"
+    );
+
+    M5Cardputer.Display.println(
+        "---------------"
+    );
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.println(
+        "CON: routed to USB"
+    );
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.println(
+        "Fn+F12 = LOCAL"
+    );
+}
+
+
+/*
+ * ====================================================
+ * Change console route
+ * ====================================================
+ */
+
+static void setCardConsoleMode(
+    uint8_t mode
+)
+{
+    if (
+        mode != CARD_CONSOLE_LOCAL &&
+        mode != CARD_CONSOLE_USB &&
+        mode != CARD_CONSOLE_BOTH
+    )
+    {
+        return;
+    }
+
+
+    if (
+        mode == CARD_CONSOLE_LOCAL &&
+        usbOutputEnabled()
+    )
+    {
+        Serial.print(
+            "\r\n"
+            "[Switching to LOCAL console]"
+            "\r\n"
+        );
+    }
+
+
+    cardConsoleMode = mode;
+
+
+    if (
+        cardConsoleMode ==
+        CARD_CONSOLE_LOCAL
+    )
+    {
+        terminalRenderAll(true);
+    }
+    else if (
+        cardConsoleMode ==
+        CARD_CONSOLE_USB
+    )
+    {
+        showUSBStatus();
+
+        Serial.print(
+            "\r\n"
+            "[USB console active]"
+            "\r\n"
+        );
+
+        Serial.print(
+            "[Fn+F12 returns LOCAL]"
+            "\r\n"
+        );
+    }
+    else
+    {
+        terminalRenderAll(true);
+
+        Serial.print(
+            "\r\n"
+            "[BOTH consoles active]"
+            "\r\n"
+        );
+    }
+}
+
+
+/*
+ * ====================================================
+ * RunCPM ESP32-specific BDOS hook
+ *
+ * Function 232
+ *
+ * DE = 0      LOCAL
+ * DE = 1      USB
+ * DE = 2      BOTH
+ * DE = FFFF   query
+ * ====================================================
+ */
+
+uint8 cardputerEsp32Bdos(
+    uint16 value
+)
+{
+    if (value == 0xFFFF)
+    {
+        return cardConsoleMode;
+    }
+
+
+    uint8_t requested =
+        (uint8_t)(
+            value &
+            0x00FF
+        );
+
+
+    if (
+        requested <=
+        CARD_CONSOLE_BOTH
+    )
+    {
+        setCardConsoleMode(
+            requested
+        );
+
+        return cardConsoleMode;
+    }
+
+
+    return 0xFF;
+}
+
+
+/*
+ * ====================================================
+ * Cardputer keyboard
  * ====================================================
  */
 
@@ -759,25 +1076,65 @@ static void pollCardputerKeyboard()
 {
     M5Cardputer.update();
 
-    if (!M5Cardputer.Keyboard.isChange())
-        return;
 
-    if (!M5Cardputer.Keyboard.isPressed())
+    if (
+        !M5Cardputer.Keyboard.isChange()
+    )
+    {
         return;
+    }
+
+
+    if (
+        !M5Cardputer.Keyboard.isPressed()
+    )
+    {
+        return;
+    }
 
 
     Keyboard_Class::KeysState status =
         M5Cardputer.Keyboard.keysState();
 
 
+    /*
+     * Emergency return to LOCAL.
+     */
+    if (
+        status.fn &&
+        status.f12
+    )
+    {
+        setCardConsoleMode(
+            CARD_CONSOLE_LOCAL
+        );
+
+        return;
+    }
+
+
+    /*
+     * Cardputer keyboard does not feed CP/M
+     * while USB exclusively owns CON:.
+     */
+    if (!localInputEnabled())
+    {
+        return;
+    }
+
+
     for (auto c : status.word)
     {
-        uint8_t ch = (uint8_t)c;
+        uint8_t ch =
+            (uint8_t)c;
 
 
         if (status.ctrl)
         {
-            if (ch >= 'a' && ch <= 'z')
+            if (
+                ch >= 'a' &&
+                ch <= 'z'
+            )
             {
                 ch =
                     (ch - 'a') + 1;
@@ -798,6 +1155,7 @@ static void pollCardputerKeyboard()
                 ch &= 0x1F;
             }
         }
+
 
         queueKey(ch);
     }
@@ -833,18 +1191,39 @@ static void pollCardputerKeyboard()
 
 /*
  * ====================================================
- * USB CDC INPUT
+ * USB keyboard
  * ====================================================
  */
 
 static void pollUSBKeyboard()
 {
+    /*
+     * Throw away USB keyboard input unless USB
+     * currently owns the console.
+     */
+    if (!usbInputEnabled())
+    {
+        while (Serial.available())
+        {
+            Serial.read();
+        }
+
+        lastUSBWasCR = false;
+
+        return;
+    }
+
+
     while (Serial.available())
     {
-        int value = Serial.read();
+        int value =
+            Serial.read();
+
 
         if (value < 0)
+        {
             break;
+        }
 
 
         uint8_t ch =
@@ -852,7 +1231,7 @@ static void pollUSBKeyboard()
 
 
         /*
-         * DEL from PC terminals becomes CP/M BS.
+         * PC DEL -> CP/M backspace.
          */
         if (ch == 0x7F)
         {
@@ -861,11 +1240,7 @@ static void pollUSBKeyboard()
 
 
         /*
-         * Normalise terminal Enter handling.
-         *
-         * CR       -> CR
-         * LF       -> CR
-         * CR + LF  -> one CR only
+         * Normalise CR / LF / CRLF.
          */
         if (ch == 0x0D)
         {
@@ -893,28 +1268,26 @@ static void pollUSBKeyboard()
         lastUSBWasCR = false;
 
 
-        /*
-         * Everything else passes directly to CP/M,
-         * including Ctrl+C, ESC, TAB etc.
-         */
         queueKey(ch);
     }
 }
 
 
-/*
- * Poll every available console input source.
- */
 static void pollInputs()
 {
+    /*
+     * Always poll the Cardputer because
+     * Fn+F12 must remain available.
+     */
     pollCardputerKeyboard();
+
     pollUSBKeyboard();
 }
 
 
 /*
  * ====================================================
- * RunCPM CONSOLE
+ * RunCPM console functions
  * ====================================================
  */
 
@@ -967,15 +1340,20 @@ uint8 _getche(void)
 void _putch(uint8 ch)
 {
     /*
-     * Native Cardputer console.
+     * Always keep the Cardputer's backing
+     * terminal up to date.
      */
     terminalProcessCharacter(ch);
 
 
     /*
-     * Exact same CP/M output also goes to USB.
+     * Only transmit to USB when USB owns
+     * or shares the console.
      */
-    Serial.write(ch);
+    if (usbOutputEnabled())
+    {
+        Serial.write(ch);
+    }
 }
 
 
@@ -988,13 +1366,25 @@ void _clrscr(void)
 
     ansiState = ANSI_NORMAL;
 
-    terminalRenderAll();
+
+    if (localOutputEnabled())
+    {
+        terminalRenderAll(true);
+    }
+
+
+    if (usbOutputEnabled())
+    {
+        Serial.print(
+            "\x1B[H\x1B[2J"
+        );
+    }
 }
 
 
 /*
  * ====================================================
- * PUN: AND LST:
+ * RunCPM PUN: / LST:
  * ====================================================
  */
 
@@ -1016,7 +1406,7 @@ int lst_open = FALSE;
 
 /*
  * ====================================================
- * RunCPM CORE
+ * RunCPM core
  * ====================================================
  */
 
@@ -1036,26 +1426,24 @@ int lst_open = FALSE;
 
 /*
  * ====================================================
- * START CP/M
+ * Start CP/M
  * ====================================================
  */
 
 void setup()
 {
     /*
-     * ESP32-S3 native USB CDC.
-     *
-     * Do not wait for a PC.
-     * CP/M remains a standalone Cardputer system.
+     * ESP32-S3 USB CDC.
      */
     Serial.begin();
 
 
     /*
-     * Cardputer hardware.
+     * Cardputer.
      */
     auto cfg =
         M5.config();
+
 
     M5Cardputer.begin(
         cfg,
@@ -1064,8 +1452,12 @@ void setup()
 
 
     /*
-     * Native local terminal.
+     * LOCAL is always the boot default.
      */
+    cardConsoleMode =
+        CARD_CONSOLE_LOCAL;
+
+
     terminalInit();
 
 
@@ -1073,18 +1465,22 @@ void setup()
         "CARDPUTER CP/M\r\n"
     );
 
+
     _puts(
         "--------------\r\n"
     );
+
 
     _puts(
         "\r\n"
     );
 
 
-    /*
-     * SD card.
-     */
+    _puts(
+        "Console: LOCAL\r\n"
+    );
+
+
     _puts(
         "Initializing SD...\r\n"
     );
@@ -1115,9 +1511,11 @@ void setup()
         "RunCPM "
     );
 
+
     _puts(
         VERSION
     );
+
 
     _puts(
         "\r\n"
@@ -1128,9 +1526,11 @@ void setup()
         "Board: "
     );
 
+
     _puts(
         BOARD
     );
+
 
     _puts(
         "\r\n"
@@ -1141,9 +1541,11 @@ void setup()
         "CPU: "
     );
 
+
     _puts(
         CPU_IS
     );
+
 
     _puts(
         "\r\n\r\n"

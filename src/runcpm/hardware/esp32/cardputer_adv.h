@@ -23,17 +23,24 @@ SdFat SD;
 #define board_digital_io
 
 /*
- * Temporary RunCPM activity output.
- * GPIO2 is exposed on the Cardputer expansion connector and
- * is unused by our present setup.
+ * RunCPM Arduino abstraction expects an LED definition.
+ * GPIO 2 is harmless for our current use.
  */
 #define LED 2
 #define LEDinv 0
 
-uint8 esp32bdos(uint16 dmaaddr)
+
+/*
+ * Implemented in main.cpp.
+ *
+ * RunCPM BDOS function 232 calls esp32bdos(DE).
+ */
+uint8 cardputerEsp32Bdos(uint16 value);
+
+
+uint8 esp32bdos(uint16 value)
 {
-    (void)dmaaddr;
-    return 0x00;
+    return cardputerEsp32Bdos(value);
 }
 
 #endif
