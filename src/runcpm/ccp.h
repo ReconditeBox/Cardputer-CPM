@@ -724,16 +724,105 @@ uint8 _ccp_dump(void) {
 // VOL command - shows the volume INFO.TXT information
 uint8 _ccp_vol(void) {
     uint8 error = FALSE;
-    uint8 letter = _RamRead(ParFCB) ? '@' + _RamRead(ParFCB) : 'A' + currentDrive;
-    uint8 folder[5] = {letter, FOLDERCHAR, '0', FOLDERCHAR, 0};
-    uint8 filename[13] = {letter, FOLDERCHAR, '0', FOLDERCHAR, 'I', 'N', 'F',
-                          'O', '.', 'T', 'X', 'T', 0};
+    uint8 drive =
+        _RamRead(ParFCB)
+            ? _RamRead(ParFCB) - 1
+            : currentDrive;
+
+    uint8 letter =
+        'A' + drive;
+
     uint8 bytesread;
     uint8 i, j;
 
     _puts("\r\nVolumes on ");
-    _putcon(folder[0]);
+    _putcon(letter);
     _puts(":\r\n");
+
+#ifdef board_cardputer_removable_media
+    uint8 root[HOST_FILENAME_MAX];
+
+    if (!_sysBuildDriveRoot(
+        drive,
+        root,
+        sizeof(root)
+    ))
+    {
+        return error;
+    }
+
+    uint8 folder[HOST_FILENAME_MAX];
+    uint8 infoFile[HOST_FILENAME_MAX];
+
+    for (i = 0; i < 16; ++i) {
+        uint8 userChar =
+            i < 10
+                ? i + '0'
+                : i - 10 + 'A';
+
+        int folderLen =
+            snprintf(
+                (char *)folder,
+                sizeof(folder),
+                "%s/%c",
+                root,
+                userChar
+            );
+
+        if (
+            folderLen <= 0 ||
+            (size_t)folderLen >= sizeof(folder)
+        )
+        {
+            continue;
+        }
+
+        if (_sys_exists(folder)) {
+            _putcon(i < 10 ? ' ' : '1');
+            _putcon(
+                i < 10
+                    ? userChar
+                    : '0' + (i - 10)
+            );
+            _puts(": ");
+
+            int fileLen =
+                snprintf(
+                    (char *)infoFile,
+                    sizeof(infoFile),
+                    "%s/%c/INFO.TXT",
+                    root,
+                    userChar
+                );
+
+            if (
+                fileLen > 0 &&
+                (size_t)fileLen < sizeof(infoFile)
+            )
+            {
+                bytesread =
+                    (uint8)_sys_readseq(
+                        infoFile,
+                        0
+                    );
+
+                if (!bytesread) {
+                    for (j = 0; j < 128; ++j) {
+                        if ((_RamRead(dmaAddr + j) < 32) ||
+                            (_RamRead(dmaAddr + j) > 126))
+                            break;
+                        _putcon(_RamRead(dmaAddr + j));
+                    }
+                }
+            }
+
+            _puts("\r\n");
+        }
+    }
+#else
+    uint8 folder[5] = {letter, FOLDERCHAR, '0', FOLDERCHAR, 0};
+    uint8 filename[13] = {letter, FOLDERCHAR, '0', FOLDERCHAR, 'I', 'N', 'F',
+                          'O', '.', 'T', 'X', 'T', 0};
 
     for (i = 0; i < 16; ++i) {
         folder[2] = i < 10 ? i + 48 : i + 55;
@@ -754,6 +843,8 @@ uint8 _ccp_vol(void) {
             _puts("\r\n");
         }
     }
+#endif
+
     return (error);
 } // _ccp_vol
 
