@@ -410,3 +410,27 @@ This implementation supports **directory-backed media only**. Files with a `.DSK
 
 Stock CP/M 2.2 `SUBMIT.COM` normally creates `A:$$$.SUB`. The firmware redirects only that legacy temporary file to the fixed C: system drive internally, so SUBMIT and `PROFILE.SUB` continue to work even when A: is empty or contains removable media.
 
+## Boot splash and WiFi skip
+
+If a file named `SPLASH.PNG` is present in the root of the SD card, the Cardputer displays it at the start of a successful boot and waits for a **physical Cardputer keypress** before continuing.
+
+For the best result, use a PNG sized for the Cardputer display:
+
+```text
+240 x 135 pixels
+```
+
+The splash is read from:
+
+```text
+/SPLASH.PNG
+```
+
+If the file is missing, unreadable, cannot fit in available memory, or cannot be decoded as PNG, boot continues normally without stopping.
+
+After the splash is dismissed, normal boot text is displayed and WiFi connection attempts begin. While the firmware is trying the networks listed in `WIFI.CFG`, pressing **any physical Cardputer key** immediately skips the remaining WiFi attempts and continues booting offline.
+
+The splash-dismiss key is fully consumed before WiFi begins, so dismissing the splash does not also skip WiFi. Likewise, a WiFi-skip keypress is consumed and is not passed on to CP/M.
+
+USB and Telnet input cannot dismiss the splash or skip WiFi; these are physical-device boot controls.
+
