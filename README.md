@@ -146,9 +146,20 @@ The intended terminal model for CP/M `CON:` is **VT100**.
 
 USB terminals can already process the VT100/ANSI output stream directly.
 
-The current local Cardputer implementation is an early 40-column x 16-row terminal implementation. The next terminal milestone is a logical **80x24 VT100 screen** with the Cardputer's physical **40x16 display acting as a viewport** that follows the logical cursor.
+The local Cardputer terminal now maintains a logical **80x24 VT100 screen** with the physical **40x16 display acting as a viewport**.
 
-That work is not yet complete.
+The viewport normally follows the logical VT100 cursor automatically.
+
+Cardputer cursor-key controls are:
+
+```text
+Fn + arrow       -> VT100 cursor key sent to CP/M
+Aa + Fn + arrow  -> pan the local viewport
+```
+
+Manual panning moves 8 logical columns horizontally or 4 rows vertically per key press. The next CP/M output or VT100 cursor movement automatically brings the active cursor back into view.
+
+VT100 normal cursor mode (`ESC [ A/B/C/D`) and application cursor mode (`ESC O A/B/C/D`) are both recognised for Cardputer keyboard input.
 
 ## Building
 
