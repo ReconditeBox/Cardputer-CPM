@@ -21,8 +21,13 @@
 /* Definition for enabling incrementing the R register for each M1 cycle */
 #define DO_INCR // Loses a bit of performance in favor or realistic R register emulation
 
+/* System drive: zero-based CP/M drive number (2 = C:) */
+#define SYSTEM_DRIVE 2
+#define SYSTEM_FCB_DRIVE (SYSTEM_DRIVE + 1)
+#define SYSTEM_DRIVE_LETTER 'C'
+
 /* Definitions for enabling PUN: and LST: devices */
-#define USE_PUN // The pun.txt and lst.txt files will appear on drive A: user 0
+#define USE_PUN // The pun.txt and lst.txt files will appear on the system drive, user 0
 #define USE_LST
 
 /* Definitions for file/console based debugging */
@@ -147,7 +152,7 @@
 
 /* Definition for CP/M 2.2 user number support */
 
-#define BATCHA // If this is defined, the $$$.SUB file will be looked for on drive A:
+#define BATCHSYS // If this is defined, the $$.SUB file will be looked for on the system drive
 // #define BATCH0					// If this is defined, the $$$.SUB file will be looked for on user area 0
 //  The default behavior of DRI's CP/M 2.2 was to have $$$.SUB created on the current drive/user while looking for it
 //  on drive A: current user, which made it complicated to run SUBMITs when not logged to drive A: user 0
@@ -272,8 +277,8 @@ static uint8 newname[17];       // New filename in host filesystem format
 static uint8 fcbname[13];       // Current filename in CP/M format
 static uint8 pattern[13];       // File matching pattern in CP/M format
 static uint16 dmaAddr = 0x0080; // Current dmaAddr
-static uint8 oDrive = 0;        // Old selected drive
-static uint8 cDrive = 0;        // Currently selected drive
+static uint8 oDrive = SYSTEM_DRIVE; // Old selected drive
+static uint8 cDrive = SYSTEM_DRIVE; // Currently selected drive
 static uint8 userCode = 0;      // Current user code
 static uint16 roVector = 0;
 static uint16 loginVector = 0;
