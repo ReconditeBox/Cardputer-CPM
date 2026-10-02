@@ -2197,27 +2197,42 @@ static void pollTelnetKeyboard()
         )
         {
             /*
-             * Reject options we did not explicitly request.
+             * Accept acknowledgements for the small Telnet option
+             * set we explicitly requested:
+             *
+             *   ECHO (1) and SUPPRESS-GO-AHEAD (3) from us,
+             *   SUPPRESS-GO-AHEAD (3) from the client.
+             *
+             * Reject everything else.
              */
             if (
                 telnetIacCommand ==
                     0xFD
             )
             {
-                telnetWriteNegotiation(
-                    0xFC,
-                    ch
-                );
+                if (
+                    ch != 0x01 &&
+                    ch != 0x03
+                )
+                {
+                    telnetWriteNegotiation(
+                        0xFC,
+                        ch
+                    );
+                }
             }
             else if (
                 telnetIacCommand ==
                     0xFB
             )
             {
-                telnetWriteNegotiation(
-                    0xFE,
-                    ch
-                );
+                if (ch != 0x03)
+                {
+                    telnetWriteNegotiation(
+                        0xFE,
+                        ch
+                    );
+                }
             }
 
             telnetInputState =
