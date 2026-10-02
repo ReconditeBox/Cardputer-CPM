@@ -1651,19 +1651,51 @@ void _ccp(void) {
     } else
 #endif
     if (firstBoot && !submitFlag) {
-        if (_sys_exists((uint8 *)AUTOEXEC)) {
+        /*
+         * Cold-boot profile:
+         *
+         * If C/0/PROFILE.SUB exists, inject C:PROFILE into the normal
+         * CCP command buffer. The ordinary external-command path then
+         * finds PROFILE.SUB and invokes SUBMIT.COM exactly as if the user
+         * had typed C:PROFILE at the prompt.
+         *
+         * firstBoot is cleared unconditionally here, so PROFILE.SUB is
+         * never run again on a warm boot.
+         */
+        firstBoot = FALSE;
+        bufferLen = 0;
+
+        if (_sys_exists((uint8 *)STARTUP_PROFILE_PATH)) {
+            const char *startup = STARTUP_PROFILE_COMMAND;
             uint16 cmd = inBuf + 2;
-            uint8 bytesread = (uint8)_RamLoad((uint8 *)AUTOEXEC, cmd, 125);
-            bufferLen = 0;
-            while (bufferLen < bytesread && _RamRead(cmd + bufferLen) > 31)
+
+            while (
+                startup[bufferLen] &&
+                bufferLen < cmdLen
+            ) {
+                _RamWrite(
+                    cmd + bufferLen,
+                    (uint8)startup[bufferLen]
+                );
+
                 bufferLen++;
-            _RamWrite(cmd + bufferLen, 0x00);
-            _RamWrite(--cmd, bufferLen);
-        } else {
-            bufferLen = 0;
+            }
+
+            _RamWrite(
+                inBuf,
+                cmdLen
+            );
+
+            _RamWrite(
+                inBuf + 1,
+                bufferLen
+            );
+
+            _RamWrite(
+                cmd + bufferLen,
+                0x00
+            );
         }
-        if (BOOTONLY)
-            firstBoot = FALSE;
     } else {
         _RamWrite(inBuf, 0);     // Clears the buffer
         _RamWrite(inBuf + 1, 0); // Clears the buffer
