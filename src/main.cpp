@@ -1565,6 +1565,148 @@ static uint64_t cardputerPhysicalKeyMask()
 }
 
 
+static bool cardputerAnyPhysicalKeyPressed()
+{
+    M5Cardputer.update();
+
+    return (
+        cardputerPhysicalKeyMask() !=
+        0
+    );
+}
+
+
+static void cardputerWaitForAllKeysReleased()
+{
+    while (true)
+    {
+        M5Cardputer.update();
+
+        if (
+            cardputerPhysicalKeyMask() ==
+            0
+        )
+        {
+            return;
+        }
+
+        delay(5);
+    }
+}
+
+
+static void cardputerWaitForPhysicalKeyPress()
+{
+    cardputerWaitForAllKeysReleased();
+
+    while (true)
+    {
+        M5Cardputer.update();
+
+        if (
+            cardputerPhysicalKeyMask() !=
+            0
+        )
+        {
+            break;
+        }
+
+        delay(5);
+    }
+
+    cardputerWaitForAllKeysReleased();
+}
+
+
+/*
+ * Display /SPLASH.PNG from the SD card and wait for one physical
+ * Cardputer keypress. If the file is absent or cannot be decoded,
+ * boot simply continues normally.
+ */
+static void showBootSplash()
+{
+    static const char *SPLASH_PATH =
+        "SPLASH.PNG";
+
+    if (!SD.exists(SPLASH_PATH))
+    {
+        return;
+    }
+
+    File splash =
+        SD.open(
+            SPLASH_PATH,
+            O_READ
+        );
+
+    if (!splash)
+    {
+        return;
+    }
+
+    uint32_t size =
+        splash.size();
+
+    if (size == 0)
+    {
+        splash.close();
+        return;
+    }
+
+    uint8_t *data =
+        (uint8_t *)malloc(size);
+
+    if (!data)
+    {
+        splash.close();
+        return;
+    }
+
+    uint32_t readCount =
+        splash.read(
+            data,
+            size
+        );
+
+    splash.close();
+
+    if (readCount != size)
+    {
+        free(data);
+        return;
+    }
+
+    M5Cardputer.Display.fillScreen(
+        BLACK
+    );
+
+    bool drawn =
+        M5Cardputer.Display.drawPng(
+            data,
+            size,
+            0,
+            0,
+            M5Cardputer.Display.width(),
+            M5Cardputer.Display.height()
+        );
+
+    free(data);
+
+    if (!drawn)
+    {
+        return;
+    }
+
+    cardputerWaitForPhysicalKeyPress();
+
+    /*
+     * Restore the logical terminal after the splash. The terminal
+     * buffer remains authoritative while the PNG is displayed.
+     */
+    terminalRenderAll(true);
+}
+
+
 
 static bool cardputerPhysicalKeyDown(
     uint64_t mask,
@@ -1642,20 +1784,7 @@ static void restoreCardputerScreen()
 
 static void mediaWaitForKeyRelease()
 {
-    while (true)
-    {
-        M5Cardputer.update();
-
-        if (
-            cardputerPhysicalKeyMask() ==
-            0
-        )
-        {
-            return;
-        }
-
-        delay(5);
-    }
+    cardputerWaitForAllKeysReleased();
 }
 
 
@@ -3946,12 +4075,39 @@ static bool wifiConnectFromConfig()
         WIFI_STA
     );
 
+    _puts(
+        "WiFi: press any Cardputer key to skip\r\n"
+    );
+
     for (
         int index = 0;
         index < WIFI_MAX_NETWORKS;
         index++
     )
     {
+        if (cardputerAnyPhysicalKeyPressed())
+        {
+            cardputerWaitForAllKeysReleased();
+
+            _puts(
+                "WiFi: skipped\r\n"
+            );
+
+            WiFi.disconnect(
+                false,
+                false
+            );
+
+            telnetServerStarted =
+                false;
+
+            WiFi.mode(
+                WIFI_OFF
+            );
+
+            return false;
+        }
+
         if (!entries[index].used)
         {
             continue;
@@ -3976,7 +4132,44 @@ static bool wifiConnectFromConfig()
             false
         );
 
-        delay(100);
+        uint32_t disconnectStarted =
+            millis();
+
+        while (
+            (
+                uint32_t
+            )(
+                millis() -
+                disconnectStarted
+            ) <
+                100
+        )
+        {
+            if (cardputerAnyPhysicalKeyPressed())
+            {
+                cardputerWaitForAllKeysReleased();
+
+                _puts(
+                    "WiFi: skipped\r\n"
+                );
+
+                WiFi.disconnect(
+                    false,
+                    false
+                );
+
+                telnetServerStarted =
+                    false;
+
+                WiFi.mode(
+                    WIFI_OFF
+                );
+
+                return false;
+            }
+
+            delay(10);
+        }
 
         if (
             entries[index].password[0]
@@ -4012,6 +4205,29 @@ static bool wifiConnectFromConfig()
                 WIFI_CONNECT_TIMEOUT_MS
         )
         {
+            if (cardputerAnyPhysicalKeyPressed())
+            {
+                cardputerWaitForAllKeysReleased();
+
+                _puts(
+                    "WiFi: skipped\r\n"
+                );
+
+                WiFi.disconnect(
+                    false,
+                    false
+                );
+
+                telnetServerStarted =
+                    false;
+
+                WiFi.mode(
+                    WIFI_OFF
+                );
+
+                return false;
+            }
+
             terminalMaybeRefresh();
 
             delay(50);
@@ -4159,6 +4375,45 @@ void setup()
     terminalInit();
 
 
+    /*
+     * Initialise the SD card before printing boot text so /SPLASH.PNG
+     * is the first content displayed during a normal successful boot.
+     */
+    SPI.begin(
+        SPIINIT
+    );
+
+
+    if (!SD.begin(SDINIT))
+    {
+        _puts(
+            "CARDPUTER CP/M\r\n"
+            "--------------\r\n"
+            "\r\n"
+            "SD CARD FAILED\r\n"
+        );
+
+        return;
+    }
+
+
+    showBootSplash();
+
+
+    /*
+     * Start the normal boot display after the splash has been dismissed.
+     */
+    terminalClearBuffer();
+
+    cursorX = 0;
+    cursorY = 0;
+
+    viewportX = 0;
+    viewportY = 0;
+
+    terminalRenderAll(true);
+
+
     _puts(
         "CARDPUTER CP/M\r\n"
     );
@@ -4177,27 +4432,6 @@ void setup()
     _puts(
         "Console: LOCAL\r\n"
     );
-
-
-    _puts(
-        "Initializing SD...\r\n"
-    );
-
-
-    SPI.begin(
-        SPIINIT
-    );
-
-
-    if (!SD.begin(SDINIT))
-    {
-        _puts(
-            "\r\n"
-            "SD CARD FAILED\r\n"
-        );
-
-        return;
-    }
 
 
     _puts(
