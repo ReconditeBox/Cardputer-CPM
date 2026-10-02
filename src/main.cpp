@@ -2473,6 +2473,365 @@ int lst_open = FALSE;
  */
 
 #include "runcpm/ram.h"
+
+
+/*
+ * ====================================================
+ * SETDEF host command
+ *
+ * CP/M command tail is passed at DE (normally 0080h).
+ * Supported here:
+ *
+ *   SETDEF
+ *   SETDEF *
+ *   SETDEF *,C:
+ *   SETDEF C:,*
+ *   SETDEF A:,C:,*
+ *
+ * Up to four drive-chain entries.
+ * ====================================================
+ */
+
+static char *setdefTrim(char *text)
+{
+    while (
+        *text == ' ' ||
+        *text == '\t'
+    )
+    {
+        text++;
+    }
+
+    char *end =
+        text + strlen(text);
+
+    while (
+        end > text &&
+        (
+            end[-1] == ' ' ||
+            end[-1] == '\t'
+        )
+    )
+    {
+        end--;
+    }
+
+    *end = 0;
+
+    return text;
+}
+
+
+static void setdefPrintChain()
+{
+    _puts(
+        "\r\nDrive Search Chain: "
+    );
+
+    for (
+        uint8_t index = 0;
+        index < setdefDriveCount;
+        index++
+    )
+    {
+        if (index)
+        {
+            _puts(",");
+        }
+
+        uint8_t entry =
+            setdefDriveChain[index];
+
+        if (
+            entry ==
+            SETDEF_CURRENT_DRIVE
+        )
+        {
+            _puts("*");
+        }
+        else
+        {
+            char drive[3];
+
+            drive[0] =
+                (char)(
+                    'A' + entry
+                );
+
+            drive[1] = ':';
+            drive[2] = 0;
+
+            _puts(drive);
+        }
+    }
+
+    _puts(
+        "\r\n"
+    );
+}
+
+
+static bool setdefParseChain(
+    char *text
+)
+{
+    uint8_t parsed[
+        SETDEF_MAX_DRIVES
+    ];
+
+    uint8_t count = 0;
+
+    char *cursor =
+        text;
+
+    while (*cursor)
+    {
+        if (
+            count >=
+            SETDEF_MAX_DRIVES
+        )
+        {
+            _puts(
+                "\r\nSETDEF: maximum is four drives\r\n"
+            );
+
+            return false;
+        }
+
+        while (
+            *cursor == ' ' ||
+            *cursor == '\t'
+        )
+        {
+            cursor++;
+        }
+
+        if (*cursor == 0)
+        {
+            break;
+        }
+
+        uint8_t entry;
+
+        if (*cursor == '*')
+        {
+            entry =
+                SETDEF_CURRENT_DRIVE;
+
+            cursor++;
+        }
+        else
+        {
+            char drive =
+                *cursor;
+
+            if (
+                drive >= 'a' &&
+                drive <= 'p'
+            )
+            {
+                drive =
+                    (char)(
+                        drive - 'a' + 'A'
+                    );
+            }
+
+            if (
+                drive < 'A' ||
+                drive > 'P'
+            )
+            {
+                _puts(
+                    "\r\nSETDEF: invalid drive search order\r\n"
+                );
+
+                return false;
+            }
+
+            entry =
+                (uint8_t)(
+                    drive - 'A'
+                );
+
+            cursor++;
+
+            if (*cursor == ':')
+            {
+                cursor++;
+            }
+        }
+
+        for (
+            uint8_t index = 0;
+            index < count;
+            index++
+        )
+        {
+            if (
+                parsed[index] ==
+                entry
+            )
+            {
+                _puts(
+                    "\r\nSETDEF: drive defined twice in search path\r\n"
+                );
+
+                return false;
+            }
+        }
+
+        parsed[count++] =
+            entry;
+
+        while (
+            *cursor == ' ' ||
+            *cursor == '\t'
+        )
+        {
+            cursor++;
+        }
+
+        if (*cursor == 0)
+        {
+            break;
+        }
+
+        if (*cursor != ',')
+        {
+            _puts(
+                "\r\nSETDEF: invalid drive search order\r\n"
+            );
+
+            return false;
+        }
+
+        cursor++;
+
+        while (
+            *cursor == ' ' ||
+            *cursor == '\t'
+        )
+        {
+            cursor++;
+        }
+
+        if (*cursor == 0)
+        {
+            _puts(
+                "\r\nSETDEF: drive expected after comma\r\n"
+            );
+
+            return false;
+        }
+    }
+
+    if (count == 0)
+    {
+        _puts(
+            "\r\nSETDEF: empty drive search order\r\n"
+        );
+
+        return false;
+    }
+
+    setdefDriveCount =
+        count;
+
+    for (
+        uint8_t index = 0;
+        index < SETDEF_MAX_DRIVES;
+        index++
+    )
+    {
+        if (index < count)
+        {
+            setdefDriveChain[index] =
+                parsed[index];
+        }
+        else
+        {
+            setdefDriveChain[index] =
+                0;
+        }
+    }
+
+    return true;
+}
+
+
+uint16 cardputerSetdefBdos(
+    uint16 commandTail
+)
+{
+    uint8_t length =
+        _RamRead(
+            commandTail
+        );
+
+    if (length > 127)
+    {
+        length = 127;
+    }
+
+    char buffer[129];
+
+    for (
+        uint8_t index = 0;
+        index < length;
+        index++
+    )
+    {
+        buffer[index] =
+            (char)_RamRead(
+                commandTail +
+                1 +
+                index
+            );
+    }
+
+    buffer[length] = 0;
+
+    char *text =
+        setdefTrim(
+            buffer
+        );
+
+    if (*text == 0)
+    {
+        setdefPrintChain();
+
+        return 0;
+    }
+
+    /*
+     * CP/M Plus SETDEF also has TEMPORARY, ORDER,
+     * DISPLAY and PAGE options. They are deliberately
+     * rejected here until their corresponding runtime
+     * behaviour is implemented.
+     */
+    if (
+        strchr(text, '[') ||
+        strchr(text, ']')
+    )
+    {
+        _puts(
+            "\r\nSETDEF: bracket options are not implemented yet\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    if (!setdefParseChain(text))
+    {
+        return 0x00FF;
+    }
+
+    setdefPrintChain();
+
+    return 0;
+}
+
+
 #include "runcpm/console.h"
 
 #include CPU
