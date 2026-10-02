@@ -66,12 +66,21 @@ static uint8_t cardConsoleMode =
 
 /*
  * ====================================================
- * Local Cardputer terminal
+ * Local Cardputer VT100 terminal
+ *
+ * Logical screen: 80 x 24
+ * Physical viewport: 40 x 16
  * ====================================================
  */
 
-#define TERM_COLS 40
-#define TERM_ROWS 16
+#define TERM_COLS 80
+#define TERM_ROWS 24
+
+#define VIEW_COLS 40
+#define VIEW_ROWS 16
+
+#define VIEW_PAN_X_STEP 8
+#define VIEW_PAN_Y_STEP 4
 
 #define CHAR_W 6
 #define CHAR_H 8
@@ -86,11 +95,21 @@ static int cursorY = 0;
 static int savedCursorX = 0;
 static int savedCursorY = 0;
 
+static int viewportX = 0;
+static int viewportY = 0;
 
 /*
- * ANSI parser.
+ * VT100 cursor-key mode.
+ *
+ * false: ESC [ A/B/C/D
+ * true : ESC O A/B/C/D
  */
+static bool applicationCursorKeys = false;
 
+
+/*
+ * ANSI / VT100 parser.
+ */
 enum
 {
     ANSI_NORMAL,
@@ -102,6 +121,7 @@ static int ansiState = ANSI_NORMAL;
 
 static int ansiParam[4];
 static int ansiParamIndex = 0;
+static bool ansiPrivate = false;
 
 
 /*
@@ -173,18 +193,88 @@ static bool usbInputEnabled()
 
 /*
  * ====================================================
- * Local display
+ * Viewport helpers
  * ====================================================
  */
 
-static void terminalPush()
+static int terminalMaxViewportX()
 {
-    if (localOutputEnabled())
+    return TERM_COLS - VIEW_COLS;
+}
+
+
+static int terminalMaxViewportY()
+{
+    return TERM_ROWS - VIEW_ROWS;
+}
+
+
+static void terminalClampViewport()
+{
+    if (viewportX < 0)
     {
-        terminal.pushSprite(0, 0);
+        viewportX = 0;
+    }
+
+    if (viewportY < 0)
+    {
+        viewportY = 0;
+    }
+
+    int maxX = terminalMaxViewportX();
+    int maxY = terminalMaxViewportY();
+
+    if (viewportX > maxX)
+    {
+        viewportX = maxX;
+    }
+
+    if (viewportY > maxY)
+    {
+        viewportY = maxY;
     }
 }
 
+
+static bool terminalEnsureCursorVisible()
+{
+    int oldX = viewportX;
+    int oldY = viewportY;
+
+    if (cursorX < viewportX)
+    {
+        viewportX = cursorX;
+    }
+    else if (cursorX >= viewportX + VIEW_COLS)
+    {
+        viewportX =
+            cursorX - VIEW_COLS + 1;
+    }
+
+    if (cursorY < viewportY)
+    {
+        viewportY = cursorY;
+    }
+    else if (cursorY >= viewportY + VIEW_ROWS)
+    {
+        viewportY =
+            cursorY - VIEW_ROWS + 1;
+    }
+
+    terminalClampViewport();
+
+    return (
+        oldX != viewportX ||
+        oldY != viewportY
+    );
+}
+
+
+/*
+ * ====================================================
+ * Local display
+ * ====================================================
+ */
 
 static void terminalClearBuffer()
 {
@@ -207,17 +297,23 @@ static void terminalRenderAll(bool force = false)
 
     terminal.fillSprite(BLACK);
 
-    for (int row = 0; row < TERM_ROWS; row++)
+    for (int screenRow = 0; screenRow < VIEW_ROWS; screenRow++)
     {
+        int logicalRow =
+            viewportY + screenRow;
+
         terminal.setCursor(
             0,
-            row * CHAR_H
+            screenRow * CHAR_H
         );
 
-        for (int col = 0; col < TERM_COLS; col++)
+        for (int screenCol = 0; screenCol < VIEW_COLS; screenCol++)
         {
+            int logicalCol =
+                viewportX + screenCol;
+
             terminal.write(
-                (uint8_t)termBuffer[row][col]
+                (uint8_t)termBuffer[logicalRow][logicalCol]
             );
         }
     }
@@ -227,8 +323,8 @@ static void terminalRenderAll(bool force = false)
 
 
 static void terminalRenderCell(
-    int col,
-    int row
+    int logicalCol,
+    int logicalRow
 )
 {
     if (!localOutputEnabled())
@@ -237,33 +333,61 @@ static void terminalRenderCell(
     }
 
     if (
-        col < 0 ||
-        col >= TERM_COLS ||
-        row < 0 ||
-        row >= TERM_ROWS
+        logicalCol < viewportX ||
+        logicalCol >= viewportX + VIEW_COLS ||
+        logicalRow < viewportY ||
+        logicalRow >= viewportY + VIEW_ROWS
     )
     {
         return;
     }
 
+    int screenCol =
+        logicalCol - viewportX;
+
+    int screenRow =
+        logicalRow - viewportY;
+
     terminal.fillRect(
-        col * CHAR_W,
-        row * CHAR_H,
+        screenCol * CHAR_W,
+        screenRow * CHAR_H,
         CHAR_W,
         CHAR_H,
         BLACK
     );
 
     terminal.setCursor(
-        col * CHAR_W,
-        row * CHAR_H
+        screenCol * CHAR_W,
+        screenRow * CHAR_H
     );
 
     terminal.write(
-        (uint8_t)termBuffer[row][col]
+        (uint8_t)termBuffer[logicalRow][logicalCol]
     );
 
     terminal.pushSprite(0, 0);
+}
+
+
+static void terminalFollowCursor()
+{
+    if (terminalEnsureCursorVisible())
+    {
+        terminalRenderAll();
+    }
+}
+
+
+static void terminalPanViewport(
+    int deltaX,
+    int deltaY
+)
+{
+    viewportX += deltaX;
+    viewportY += deltaY;
+
+    terminalClampViewport();
+    terminalRenderAll();
 }
 
 
@@ -293,7 +417,16 @@ static void terminalInit()
     cursorX = 0;
     cursorY = 0;
 
+    savedCursorX = 0;
+    savedCursorY = 0;
+
+    viewportX = 0;
+    viewportY = 0;
+
+    applicationCursorKeys = false;
+
     ansiState = ANSI_NORMAL;
+    ansiPrivate = false;
 
     terminalClearBuffer();
     terminalRenderAll(true);
@@ -302,7 +435,7 @@ static void terminalInit()
 
 /*
  * ====================================================
- * Scrolling
+ * Logical-screen scrolling
  * ====================================================
  */
 
@@ -362,6 +495,7 @@ static void terminalCheckCursor()
 static void terminalPutPrintable(uint8_t ch)
 {
     terminalCheckCursor();
+    terminalFollowCursor();
 
     termBuffer[cursorY][cursorX] =
         (char)ch;
@@ -374,12 +508,14 @@ static void terminalPutPrintable(uint8_t ch)
     cursorX++;
 
     terminalCheckCursor();
+    terminalFollowCursor();
 }
 
 
 static void terminalCR()
 {
     cursorX = 0;
+    terminalFollowCursor();
 }
 
 
@@ -388,6 +524,7 @@ static void terminalLF()
     cursorY++;
 
     terminalCheckCursor();
+    terminalFollowCursor();
 }
 
 
@@ -402,6 +539,8 @@ static void terminalBackspace()
         cursorY--;
         cursorX = TERM_COLS - 1;
     }
+
+    terminalFollowCursor();
 }
 
 
@@ -421,12 +560,13 @@ static void terminalTab()
     }
 
     terminalCheckCursor();
+    terminalFollowCursor();
 }
 
 
 /*
  * ====================================================
- * ANSI support
+ * ANSI / VT100 support
  * ====================================================
  */
 
@@ -562,6 +702,7 @@ static void ansiExecute(uint8_t command)
                 cursorY = 0;
             }
 
+            terminalFollowCursor();
             break;
 
 
@@ -578,6 +719,7 @@ static void ansiExecute(uint8_t command)
                     TERM_ROWS - 1;
             }
 
+            terminalFollowCursor();
             break;
 
 
@@ -594,6 +736,7 @@ static void ansiExecute(uint8_t command)
                     TERM_COLS - 1;
             }
 
+            terminalFollowCursor();
             break;
 
 
@@ -609,7 +752,52 @@ static void ansiExecute(uint8_t command)
                 cursorX = 0;
             }
 
+            terminalFollowCursor();
             break;
+
+
+        case 'G':
+        {
+            int col =
+                ansiGetParam(0, 1);
+
+            cursorX = col - 1;
+
+            if (cursorX < 0)
+            {
+                cursorX = 0;
+            }
+
+            if (cursorX >= TERM_COLS)
+            {
+                cursorX = TERM_COLS - 1;
+            }
+
+            terminalFollowCursor();
+            break;
+        }
+
+
+        case 'd':
+        {
+            int row =
+                ansiGetParam(0, 1);
+
+            cursorY = row - 1;
+
+            if (cursorY < 0)
+            {
+                cursorY = 0;
+            }
+
+            if (cursorY >= TERM_ROWS)
+            {
+                cursorY = TERM_ROWS - 1;
+            }
+
+            terminalFollowCursor();
+            break;
+        }
 
 
         case 'H':
@@ -646,6 +834,7 @@ static void ansiExecute(uint8_t command)
                     TERM_COLS - 1;
             }
 
+            terminalFollowCursor();
             break;
         }
 
@@ -658,10 +847,6 @@ static void ansiExecute(uint8_t command)
             if (mode == 2)
             {
                 terminalClearBuffer();
-
-                cursorX = 0;
-                cursorY = 0;
-
                 terminalRenderAll();
             }
             else if (mode == 1)
@@ -700,12 +885,43 @@ static void ansiExecute(uint8_t command)
             cursorY = savedCursorY;
 
             terminalCheckCursor();
+            terminalFollowCursor();
+
+            break;
+
+
+        case 'h':
+
+            if (
+                ansiPrivate &&
+                ansiParam[0] == 1
+            )
+            {
+                applicationCursorKeys = true;
+            }
+
+            break;
+
+
+        case 'l':
+
+            if (
+                ansiPrivate &&
+                ansiParam[0] == 1
+            )
+            {
+                applicationCursorKeys = false;
+            }
 
             break;
 
 
         case 'm':
 
+            /*
+             * SGR is accepted for compatibility.
+             * Colour/attribute rendering is not yet modelled.
+             */
             break;
 
 
@@ -725,6 +941,7 @@ static void ansiBeginCSI()
     );
 
     ansiParamIndex = 0;
+    ansiPrivate = false;
 
     ansiState = ANSI_CSI;
 }
@@ -757,7 +974,21 @@ static void terminalProcessCharacter(
             cursorY = savedCursorY;
 
             terminalCheckCursor();
+            terminalFollowCursor();
 
+            return;
+        }
+
+        if (ch == 'D')
+        {
+            terminalLF();
+            return;
+        }
+
+        if (ch == 'E')
+        {
+            terminalCR();
+            terminalLF();
             return;
         }
 
@@ -767,6 +998,14 @@ static void terminalProcessCharacter(
 
             cursorX = 0;
             cursorY = 0;
+
+            savedCursorX = 0;
+            savedCursorY = 0;
+
+            viewportX = 0;
+            viewportY = 0;
+
+            applicationCursorKeys = false;
 
             terminalRenderAll();
 
@@ -804,6 +1043,7 @@ static void terminalProcessCharacter(
 
         if (ch == '?')
         {
+            ansiPrivate = true;
             return;
         }
 
@@ -828,6 +1068,9 @@ static void terminalProcessCharacter(
 
         cursorX = 0;
         cursorY = 0;
+
+        viewportX = 0;
+        viewportY = 0;
 
         terminalRenderAll();
 
@@ -940,7 +1183,7 @@ static void showUSBStatus()
     M5Cardputer.Display.println();
 
     M5Cardputer.Display.println(
-        "Fn+F12 = LOCAL"
+        "Fn+= = LOCAL"
     );
 }
 
@@ -1002,7 +1245,7 @@ static void setCardConsoleMode(
         );
 
         Serial.print(
-            "[Fn+F12 returns LOCAL]"
+            "[Fn+= returns LOCAL]"
             "\r\n"
         );
     }
@@ -1099,6 +1342,9 @@ static void pollCardputerKeyboard()
 
     /*
      * Emergency return to LOCAL.
+     *
+     * The M5Cardputer library names the physical
+     * Fn + = combination "F12".
      */
     if (
         status.fn &&
@@ -1113,12 +1359,111 @@ static void pollCardputerKeyboard()
     }
 
 
+    bool arrowPressed =
+        status.up ||
+        status.down ||
+        status.left ||
+        status.right;
+
+
+    /*
+     * Manual local viewport pan:
+     *
+     * Aa + Fn + arrow
+     *
+     * Horizontal movement is 8 logical columns per
+     * key press; vertical movement is 4 rows.
+     *
+     * These keys are consumed locally and are NOT
+     * passed to CP/M.
+     */
+    if (
+        status.shift &&
+        status.fn &&
+        arrowPressed &&
+        localOutputEnabled()
+    )
+    {
+        if (status.left)
+        {
+            terminalPanViewport(
+                -VIEW_PAN_X_STEP,
+                0
+            );
+        }
+        else if (status.right)
+        {
+            terminalPanViewport(
+                VIEW_PAN_X_STEP,
+                0
+            );
+        }
+        else if (status.up)
+        {
+            terminalPanViewport(
+                0,
+                -VIEW_PAN_Y_STEP
+            );
+        }
+        else if (status.down)
+        {
+            terminalPanViewport(
+                0,
+                VIEW_PAN_Y_STEP
+            );
+        }
+
+        return;
+    }
+
+
     /*
      * Cardputer keyboard does not feed CP/M
      * while USB exclusively owns CON:.
      */
     if (!localInputEnabled())
     {
+        return;
+    }
+
+
+    /*
+     * Normal Cardputer arrow keys are Fn-layer keys.
+     *
+     * Send proper VT100 cursor-key sequences to CP/M.
+     * DECCKM application mode uses ESC O x; normal
+     * cursor mode uses ESC [ x.
+     */
+    if (
+        status.fn &&
+        arrowPressed
+    )
+    {
+        queueKey(0x1B);
+
+        queueKey(
+            applicationCursorKeys
+                ? 'O'
+                : '['
+        );
+
+        if (status.up)
+        {
+            queueKey('A');
+        }
+        else if (status.down)
+        {
+            queueKey('B');
+        }
+        else if (status.right)
+        {
+            queueKey('C');
+        }
+        else if (status.left)
+        {
+            queueKey('D');
+        }
+
         return;
     }
 
@@ -1277,7 +1622,7 @@ static void pollInputs()
 {
     /*
      * Always poll the Cardputer because
-     * Fn+F12 must remain available.
+     * Fn+= must remain available.
      */
     pollCardputerKeyboard();
 
@@ -1364,7 +1709,11 @@ void _clrscr(void)
     cursorX = 0;
     cursorY = 0;
 
+    viewportX = 0;
+    viewportY = 0;
+
     ansiState = ANSI_NORMAL;
+    ansiPrivate = false;
 
 
     if (localOutputEnabled())
