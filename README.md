@@ -306,3 +306,42 @@ If the Telnet client disconnects while it owns `CON:`, the firmware automaticall
 
 The physical **Fn + =** key combination always forces LOCAL mode, including while TELNET owns the console.
 
+## SETDEF command search path
+
+The firmware includes a small `SETDEF.COM` utility that controls the drive search chain used by the internal CCP when loading external commands and SUB files.
+
+The default search chain is:
+
+```text
+*,C:
+```
+
+where `*` means the current/default drive. Thus, from A: the CCP searches A: first and then the C: system drive.
+
+Display the current search chain:
+
+```text
+C0>SETDEF
+Drive Search Chain: *,C:
+```
+
+Change the order:
+
+```text
+C0>SETDEF C:,*
+Drive Search Chain: C:,*
+```
+
+Use only the current drive:
+
+```text
+C0>SETDEF *
+Drive Search Chain: *
+```
+
+Up to four entries are supported, using drives A: through P: and `*`. Explicitly drive-qualified commands bypass the SETDEF chain.
+
+This first implementation covers the drive-search portion of CP/M Plus SETDEF. The CP/M Plus bracket options `TEMPORARY`, `ORDER`, `DISPLAY`, and `PAGE` are not implemented yet and are rejected rather than silently ignored.
+
+Place `SETDEF.COM` in `C/0` with the other system utilities.
+
