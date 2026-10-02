@@ -1336,22 +1336,79 @@ uint8 cardputerEsp32Bdos(
  * ====================================================
  */
 
+static uint64_t cardputerPhysicalKeyMask()
+{
+    uint64_t mask = 0;
+
+    const auto &keys =
+        M5Cardputer.Keyboard.keyList();
+
+    for (const auto &key : keys)
+    {
+        if (
+            key.x < 0 ||
+            key.x >= 14 ||
+            key.y < 0 ||
+            key.y >= 4
+        )
+        {
+            continue;
+        }
+
+        uint8_t bit =
+            (uint8_t)(
+                key.y * 14 +
+                key.x
+            );
+
+        mask |=
+            ((uint64_t)1 << bit);
+    }
+
+    return mask;
+}
+
+
 static void pollCardputerKeyboard()
 {
+    static uint64_t previousKeyMask = 0;
+
     M5Cardputer.update();
 
 
+    /*
+     * Do NOT use Keyboard.isChange() here.
+     *
+     * The M5Cardputer library's isChange() only compares
+     * the NUMBER of pressed keys. Different combinations
+     * containing the same number of keys can therefore be
+     * missed completely.
+     *
+     * Instead compare the exact 56-key physical matrix.
+     */
+    uint64_t currentKeyMask =
+        cardputerPhysicalKeyMask();
+
+
     if (
-        !M5Cardputer.Keyboard.isChange()
+        currentKeyMask ==
+        previousKeyMask
     )
     {
         return;
     }
 
 
-    if (
-        !M5Cardputer.Keyboard.isPressed()
-    )
+    previousKeyMask =
+        currentKeyMask;
+
+
+    /*
+     * A change to no keys pressed is still important:
+     * it updates previousKeyMask so the next press is seen.
+     * There is simply no CP/M key event to generate here.
+     */
+    if (currentKeyMask == 0)
     {
         return;
     }
