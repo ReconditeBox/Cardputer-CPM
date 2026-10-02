@@ -63,13 +63,21 @@ P/0
 
 The first directory level is the CP/M drive and the second is the CP/M user area.
 
-So:
+The Cardputer boots with **C: user 0** as its system/default drive. System utilities should therefore be placed in:
 
 ```text
-A/0/STAT.COM
+C/0
 ```
 
-appears to CP/M as `STAT.COM` on drive A:, user 0.
+For example:
+
+```text
+C/0/STAT.COM
+```
+
+appears to CP/M as `STAT.COM` on drive C:, user 0.
+
+If an external command is not found on the current drive, the internal CCP also searches C: user 0. SUBMIT batch lookup and the PUN:/LST: host files likewise use C: as the system drive.
 
 Additional user areas can be created as required:
 
@@ -82,9 +90,16 @@ A/15
 
 This makes it possible to manage CP/M files directly from another computer by inserting the SD card and copying normal files.
 
+### Moving the system files to C:
+
+Before flashing a firmware build that uses C: as the system drive, make sure the SD card contains a `C/0` directory and copy the CP/M system/utilities that were previously kept in `A/0` into `C/0`.
+
+Keep the old `A/0` copy until the new firmware has booted successfully and the utilities have been tested from `C0>`. A: and B: remain ordinary directory-backed CP/M drives for now; removable-disk behaviour is a separate future change.
+
+
 ## Console modes
 
-The machine currently supports three console-routing modes.
+The machine currently supports four console-routing modes.
 
 ### LOCAL
 
@@ -123,7 +138,7 @@ BOTH.COM
 From CP/M:
 
 ```text
-A>USB
+C0>USB
 ```
 
 switches control to the USB console.
@@ -131,7 +146,7 @@ switches control to the USB console.
 From the USB terminal:
 
 ```text
-A>LOCAL
+C0>LOCAL
 ```
 
 returns control to the Cardputer.
