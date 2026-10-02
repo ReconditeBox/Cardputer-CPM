@@ -345,3 +345,27 @@ This first implementation covers the drive-search portion of CP/M Plus SETDEF. T
 
 Place `SETDEF.COM` in `C/0` with the other system utilities.
 
+## Cold-boot PROFILE.SUB
+
+The Cardputer uses `C/0/PROFILE.SUB` as its startup profile.
+
+If that file exists, it is executed automatically once on a cold boot, exactly as though the user had typed:
+
+```text
+C0>C:PROFILE
+```
+
+The normal CCP `.SUB` handling then invokes `SUBMIT.COM`.
+
+`PROFILE.SUB` is **not** run again on ordinary warm boots after programs exit. Rebooting or resetting the Cardputer starts a new cold boot and runs the profile again.
+
+The previous `AUTOEXEC.TXT` startup mechanism has been removed.
+
+A sample `PROFILE.SUB.EXAMPLE` is included in the repository. Copy it to:
+
+```text
+C/0/PROFILE.SUB
+```
+
+and edit it as required.
+
