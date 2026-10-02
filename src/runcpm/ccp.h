@@ -1186,6 +1186,165 @@ const Command *_ccp_cnum(void) {
     return NULL; // External command
 } // _ccp_cnum
 
+/*
+ * Open a command file using the current SETDEF drive chain.
+ *
+ * An explicitly drive-qualified command bypasses the chain.
+ * For each SETDEF drive we try the current user first, then
+ * user 0 when the current user is non-zero.
+ *
+ * If a user-0 file is found, *savedUser is set so the caller
+ * can restore the original user after loading the command.
+ */
+static bool _ccp_openSetdefPath(
+    uint16 fcbaddr,
+    uint8 originalDrive,
+    uint8 *savedUser
+)
+{
+    uint8 savedCDrive =
+        cDrive;
+
+    uint8 savedODrive =
+        oDrive;
+
+
+    if (originalDrive)
+    {
+        bool found =
+            !_ccp_bdos(
+                F_OPEN,
+                fcbaddr
+            );
+
+        cDrive =
+            savedCDrive;
+
+        oDrive =
+            savedODrive;
+
+        return found;
+    }
+
+
+    bool tried[16];
+
+    memset(
+        tried,
+        0,
+        sizeof(tried)
+    );
+
+
+    for (
+        uint8 index = 0;
+        index < setdefDriveCount;
+        index++
+    )
+    {
+        uint8 driveIndex =
+            setdefDriveChain[index];
+
+        if (
+            driveIndex ==
+            SETDEF_CURRENT_DRIVE
+        )
+        {
+            driveIndex =
+                currentDrive;
+        }
+
+
+        if (
+            driveIndex > 15 ||
+            tried[driveIndex]
+        )
+        {
+            continue;
+        }
+
+        tried[driveIndex] =
+            true;
+
+
+        _RamWrite(
+            fcbaddr,
+            driveIndex + 1
+        );
+
+
+        bool found =
+            !_ccp_bdos(
+                F_OPEN,
+                fcbaddr
+            );
+
+        cDrive =
+            savedCDrive;
+
+        oDrive =
+            savedODrive;
+
+
+        if (found)
+        {
+            return true;
+        }
+
+
+        if (currentUser)
+        {
+            _ccp_bdos(
+                F_USERNUM,
+                0x0000
+            );
+
+
+            found =
+                !_ccp_bdos(
+                    F_OPEN,
+                    fcbaddr
+                );
+
+            cDrive =
+                savedCDrive;
+
+            oDrive =
+                savedODrive;
+
+
+            if (found)
+            {
+                *savedUser =
+                    currentUser;
+
+                return true;
+            }
+
+
+            _ccp_bdos(
+                F_USERNUM,
+                currentUser
+            );
+        }
+    }
+
+
+    _RamWrite(
+        fcbaddr,
+        originalDrive
+    );
+
+    cDrive =
+        savedCDrive;
+
+    oDrive =
+        savedODrive;
+
+    return false;
+}
+
+
 // External (.COM) command
 uint8 _ccp_ext(void) {
     bool error = TRUE, found = FALSE;
@@ -1204,28 +1363,29 @@ uint8 _ccp_ext(void) {
             _RamWrite(CmdFCB + 11, 'M');
         }
 
-        drive = _RamRead(CmdFCB);           // Get the drive from the command FCB
-        found = !_ccp_bdos(F_OPEN, CmdFCB); // Look for the program on the FCB
-                                            // drive, current or specified
-        if (!found) {                       // If not found
-            if (!drive) {                   // and the search was on the default drive
-                _RamWrite(CmdFCB, SYSTEM_FCB_DRIVE); // Then look on system drive, user 0
-                if (currentUser) {
-                    user = currentUser;           // Save the current user
-                    _ccp_bdos(F_USERNUM, 0x0000); // then set it to 0
-                }
-                found = !_ccp_bdos(F_OPEN, CmdFCB);
-                if (!found) {                               // If still not found then
-                    if (currentUser) {                      // If current user not = 0
-                        _RamWrite(CmdFCB, 0x00);            // look on current drive user 0
-                        found = !_ccp_bdos(F_OPEN, CmdFCB); // and try again
-                    }
-                }
-            }
-        }
-        if (!found) {
-            _RamWrite(CmdFCB, drive);      // restore previous drive
-            _ccp_bdos(F_USERNUM, currentUser); // restore to previous user
+        drive =
+            _RamRead(
+                CmdFCB
+            );
+
+        found =
+            _ccp_openSetdefPath(
+                CmdFCB,
+                drive,
+                &user
+            );
+
+        if (!found)
+        {
+            _RamWrite(
+                CmdFCB,
+                drive
+            );
+
+            _ccp_bdos(
+                F_USERNUM,
+                currentUser
+            );
         }
     }
 
@@ -1236,28 +1396,29 @@ uint8 _ccp_ext(void) {
         _RamWrite(CmdFCB + 10, 'U');
         _RamWrite(CmdFCB + 11, 'B');
 
-        drive = _RamRead(CmdFCB);           // Get the drive from the command FCB
-        found = !_ccp_bdos(F_OPEN, CmdFCB); // Look for the program on the FCB
-                                            // drive, current or specified
-        if (!found) {                       // If not found
-            if (!drive) {                   // and the search was on the default drive
-                _RamWrite(CmdFCB, SYSTEM_FCB_DRIVE); // Then look on system drive, user 0
-                if (currentUser) {
-                    user = currentUser;           // Save the current user
-                    _ccp_bdos(F_USERNUM, 0x0000); // then set it to 0
-                }
-                found = !_ccp_bdos(F_OPEN, CmdFCB);
-                if (!found) {                               // If still not found then
-                    if (currentUser) {                      // If current user not = 0
-                        _RamWrite(CmdFCB, 0x00);            // look on current drive user 0
-                        found = !_ccp_bdos(F_OPEN, CmdFCB); // and try again
-                    }
-                }
-            }
-        }
-        if (!found) {
-            _RamWrite(CmdFCB, drive);      // restore previous drive
-            _ccp_bdos(F_USERNUM, currentUser); // restore to previous user
+        drive =
+            _RamRead(
+                CmdFCB
+            );
+
+        found =
+            _ccp_openSetdefPath(
+                CmdFCB,
+                drive,
+                &user
+            );
+
+        if (!found)
+        {
+            _RamWrite(
+                CmdFCB,
+                drive
+            );
+
+            _ccp_bdos(
+                F_USERNUM,
+                currentUser
+            );
         }
 
         if (found) {
@@ -1286,26 +1447,17 @@ uint8 _ccp_ext(void) {
                 _RamWrite(CmdFCB + i + 1, str[i]);
 
             // now try to find SUBMIT.COM file
+            drive =
+                _RamRead(
+                    CmdFCB
+                );
+
             found =
-                !_ccp_bdos(F_OPEN, CmdFCB);  // Look for the program on the FCB
-                                             // drive, current or specified
-            if (!found) {                    // If not found
-                if (!drive) {                // and the search was on the default drive
-                    _RamWrite(CmdFCB, SYSTEM_FCB_DRIVE); // Then look on system drive, user 0
-                    if (currentUser) {
-                        user = currentUser;           // Save the current user
-                        _ccp_bdos(F_USERNUM, 0x0000); // then set it to 0
-                    }
-                    found = !_ccp_bdos(F_OPEN, CmdFCB);
-                    if (!found) {      // If still not found then
-                        if (currentUser) { // If current user not = 0
-                            _RamWrite(CmdFCB,
-                                      0x00);                    // look on current drive user 0
-                            found = !_ccp_bdos(F_OPEN, CmdFCB); // and try again
-                        }
-                    }
-                }
-            }
+                _ccp_openSetdefPath(
+                    CmdFCB,
+                    drive,
+                    &user
+                );
             if (found) {
                 // insert "@" into command buffer
                 // note: this is so the rest will be parsed correctly
@@ -1346,7 +1498,8 @@ uint8 _ccp_ext(void) {
         }
         _RamWrite(CmdFCB,
                   drive); // Set the command FCB drive back to what it was
-        cDrive = oDrive;  // And restore cDrive
+        cDrive = currentDrive;
+        oDrive = currentDrive;
 
         // Place a trampoline to call the external command
         // as it may return using RET instead of JP 0000h
