@@ -1,0 +1,7 @@
+; Cardputer CP/M startup profile
+; Copy to C/0/PROFILE.SUB
+;
+; This file is run automatically once at cold boot.
+; It is not rerun on warm boots.
+
+SETDEF *,C:
