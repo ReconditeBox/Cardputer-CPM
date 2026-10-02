@@ -1900,9 +1900,9 @@ void setup()
     );
 
     M5Cardputer.Keyboard.begin(
-        std::make_unique<
-            CardputerAdvPollingKeyboardReader
-        >()
+        std::unique_ptr<KeyboardReader>(
+            new CardputerAdvPollingKeyboardReader()
+        )
     );
 
 
