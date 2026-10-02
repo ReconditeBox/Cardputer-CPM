@@ -2,6 +2,8 @@
 #include <M5Cardputer.h>
 #include <string.h>
 
+#include "cardputer_adv_keyboard.h"
+
 #ifdef NOP
 #undef NOP
 #endif
@@ -1883,6 +1885,24 @@ void setup()
     M5Cardputer.begin(
         cfg,
         true
+    );
+
+
+    /*
+     * Replace M5Stack's interrupt-driven ADV keyboard reader
+     * with our FIFO-draining polling reader.
+     *
+     * The stock reader installs an ISR on GPIO 11. Detach it
+     * before replacing the reader so no stale callback remains.
+     */
+    detachInterrupt(
+        digitalPinToInterrupt(11)
+    );
+
+    M5Cardputer.Keyboard.begin(
+        std::make_unique<
+            CardputerAdvPollingKeyboardReader
+        >()
     );
 
 
