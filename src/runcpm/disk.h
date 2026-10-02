@@ -877,21 +877,78 @@ uint8 _MakeDisk(uint16 fcbaddr) {
 
 // Checks if there's a temp submit file present
 uint8 _CheckSUB(void) {
-    uint8 result;
-    uint8 oCode = userCode;                          // Saves the current user code (original BDOS does not do this)
-    _HostnameToFCB(tmpFCB, (uint8 *)"$???????.???"); // The original BDOS in fact only looks for a file which start with $
-#ifdef BATCHSYS
-    _RamWrite(
-        tmpFCB,
-        SYSTEM_FCB_DRIVE
-    ); // Forces it to be checked on the system drive
-#endif
+    uint8 result = 0x00;
+    uint8 oCode = userCode; // Saves the current user code
+
 #ifdef BATCH0
     userCode = 0; // Forces it to be checked on user 0
 #endif
-    result = (_SearchFirst(tmpFCB, FALSE) == 0x00) ? 0xff : 0x00;
-    userCode = oCode; // Restores the current user code
-    return (result);
+
+#ifdef BATCHSYS
+    /*
+     * Prefer the configured system drive for native Cardputer submit
+     * handling, but remain compatible with stock CP/M 2.2 SUBMIT.COM,
+     * which creates $$.SUB on drive A:.
+     */
+    _HostnameToFCB(
+        tmpFCB,
+        (uint8 *)"$???????.???"
+    );
+
+    _RamWrite(
+        tmpFCB,
+        SYSTEM_FCB_DRIVE
+    );
+
+    result =
+        (_SearchFirst(
+            tmpFCB,
+            FALSE
+        ) == 0x00)
+            ? 0xff
+            : 0x00;
+
+    if (
+        !result &&
+        SYSTEM_DRIVE != 0
+    )
+    {
+        _HostnameToFCB(
+            tmpFCB,
+            (uint8 *)"$???????.???"
+        );
+
+        _RamWrite(
+            tmpFCB,
+            1
+        );
+
+        result =
+            (_SearchFirst(
+                tmpFCB,
+                FALSE
+            ) == 0x00)
+                ? 0xff
+                : 0x00;
+    }
+#else
+    _HostnameToFCB(
+        tmpFCB,
+        (uint8 *)"$???????.???"
+    );
+
+    result =
+        (_SearchFirst(
+            tmpFCB,
+            FALSE
+        ) == 0x00)
+            ? 0xff
+            : 0x00;
+#endif
+
+    userCode = oCode;
+
+    return result;
 }
 
 #endif
