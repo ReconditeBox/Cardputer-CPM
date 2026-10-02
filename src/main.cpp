@@ -99,6 +99,17 @@ static int viewportX = 0;
 static int viewportY = 0;
 
 /*
+ * LCD refresh batching.
+ *
+ * CP/M/VT100 output updates the logical 80x24 buffer immediately.
+ * The physical LCD is refreshed at most once every 20 ms (50 Hz).
+ */
+#define LCD_REFRESH_MS 20
+
+static bool terminalDirty = false;
+static uint32_t terminalLastRefresh = 0;
+
+/*
  * VT100 cursor-key mode.
  *
  * false: ESC [ A/B/C/D
@@ -319,6 +330,38 @@ static void terminalRenderAll(bool force = false)
     }
 
     terminal.pushSprite(0, 0);
+
+    terminalDirty = false;
+    terminalLastRefresh = millis();
+}
+
+
+static void terminalMarkDirty()
+{
+    terminalDirty = true;
+}
+
+
+static void terminalMaybeRefresh()
+{
+    if (
+        !terminalDirty ||
+        !localOutputEnabled()
+    )
+    {
+        return;
+    }
+
+    uint32_t now = millis();
+
+    if (
+        (uint32_t)(
+            now - terminalLastRefresh
+        ) >= LCD_REFRESH_MS
+    )
+    {
+        terminalRenderAll();
+    }
 }
 
 
@@ -327,45 +370,15 @@ static void terminalRenderCell(
     int logicalRow
 )
 {
-    if (!localOutputEnabled())
-    {
-        return;
-    }
+    /*
+     * The logical screen buffer is authoritative.
+     * Do not push the 240x135 sprite for each character;
+     * simply schedule a batched LCD refresh.
+     */
+    (void)logicalCol;
+    (void)logicalRow;
 
-    if (
-        logicalCol < viewportX ||
-        logicalCol >= viewportX + VIEW_COLS ||
-        logicalRow < viewportY ||
-        logicalRow >= viewportY + VIEW_ROWS
-    )
-    {
-        return;
-    }
-
-    int screenCol =
-        logicalCol - viewportX;
-
-    int screenRow =
-        logicalRow - viewportY;
-
-    terminal.fillRect(
-        screenCol * CHAR_W,
-        screenRow * CHAR_H,
-        CHAR_W,
-        CHAR_H,
-        BLACK
-    );
-
-    terminal.setCursor(
-        screenCol * CHAR_W,
-        screenRow * CHAR_H
-    );
-
-    terminal.write(
-        (uint8_t)termBuffer[logicalRow][logicalCol]
-    );
-
-    terminal.pushSprite(0, 0);
+    terminalMarkDirty();
 }
 
 
@@ -373,7 +386,7 @@ static void terminalFollowCursor()
 {
     if (terminalEnsureCursorVisible())
     {
-        terminalRenderAll();
+        terminalMarkDirty();
     }
 }
 
@@ -387,7 +400,15 @@ static void terminalPanViewport(
     viewportY += deltaY;
 
     terminalClampViewport();
-    terminalRenderAll();
+
+    if (localOutputEnabled())
+    {
+        terminalRenderAll(true);
+    }
+    else
+    {
+        terminalMarkDirty();
+    }
 }
 
 
@@ -457,7 +478,7 @@ static void terminalScroll()
 
     cursorY = TERM_ROWS - 1;
 
-    terminalRenderAll();
+    terminalMarkDirty();
 }
 
 
@@ -612,7 +633,7 @@ static void terminalClearToEnd()
         }
     }
 
-    terminalRenderAll();
+    terminalMarkDirty();
 }
 
 
@@ -639,7 +660,7 @@ static void terminalClearFromStart()
         }
     }
 
-    terminalRenderAll();
+    terminalMarkDirty();
 }
 
 
@@ -680,7 +701,7 @@ static void terminalEraseLine(int mode)
         }
     }
 
-    terminalRenderAll();
+    terminalMarkDirty();
 }
 
 
@@ -847,7 +868,7 @@ static void ansiExecute(uint8_t command)
             if (mode == 2)
             {
                 terminalClearBuffer();
-                terminalRenderAll();
+                terminalMarkDirty();
             }
             else if (mode == 1)
             {
@@ -1007,7 +1028,7 @@ static void terminalProcessCharacter(
 
             applicationCursorKeys = false;
 
-            terminalRenderAll();
+            terminalMarkDirty();
 
             return;
         }
@@ -1072,7 +1093,7 @@ static void terminalProcessCharacter(
         viewportX = 0;
         viewportY = 0;
 
-        terminalRenderAll();
+        terminalMarkDirty();
 
         return;
     }
@@ -1627,6 +1648,8 @@ static void pollInputs()
     pollCardputerKeyboard();
 
     pollUSBKeyboard();
+
+    terminalMaybeRefresh();
 }
 
 
@@ -1689,6 +1712,12 @@ void _putch(uint8 ch)
      * terminal up to date.
      */
     terminalProcessCharacter(ch);
+
+    /*
+     * Refresh the physical LCD only when the 20 ms
+     * batching interval has elapsed.
+     */
+    terminalMaybeRefresh();
 
 
     /*
