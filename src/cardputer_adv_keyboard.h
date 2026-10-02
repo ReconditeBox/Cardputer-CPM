@@ -33,7 +33,9 @@ public:
     void begin() override
     {
         _tca8418 =
-            std::make_unique<Adafruit_TCA8418>();
+            std::unique_ptr<Adafruit_TCA8418>(
+                new Adafruit_TCA8418()
+            );
 
         if (!_tca8418->begin())
         {
