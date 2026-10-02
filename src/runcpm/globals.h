@@ -25,6 +25,7 @@
 #define SYSTEM_DRIVE 2
 #define SYSTEM_FCB_DRIVE (SYSTEM_DRIVE + 1)
 #define SYSTEM_DRIVE_LETTER 'C'
+#define SYSTEM_DRIVE_PATH "C/0/"
 
 /* Definitions for enabling PUN: and LST: devices */
 #define USE_PUN // The pun.txt and lst.txt files will appear on the system drive, user 0
