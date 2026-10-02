@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <M5Cardputer.h>
+#include <WiFi.h>
 #include <string.h>
 
 #include "cardputer_adv_keyboard.h"
@@ -1863,6 +1864,483 @@ int lst_open = FALSE;
 
 /*
  * ====================================================
+ * WiFi configuration
+ *
+ * Root of SD card: /WIFI.CFG
+ *
+ * SSID1=First Network
+ * PASS1=first password
+ * SSID2=Second Network
+ * PASS2=second password
+ *
+ * Networks are tried in numeric order.
+ * Missing file / failed connections are non-fatal.
+ * ====================================================
+ */
+
+#define WIFI_CONFIG_FILE "/WIFI.CFG"
+#define WIFI_MAX_NETWORKS 10
+#define WIFI_SSID_SIZE 33
+#define WIFI_PASS_SIZE 65
+#define WIFI_LINE_SIZE 160
+#define WIFI_CONNECT_TIMEOUT_MS 10000
+
+struct WifiConfigEntry
+{
+    bool used;
+    char ssid[WIFI_SSID_SIZE];
+    char password[WIFI_PASS_SIZE];
+};
+
+
+static char *wifiTrim(char *text)
+{
+    while (
+        *text == ' ' ||
+        *text == '\t'
+    )
+    {
+        text++;
+    }
+
+    char *end =
+        text + strlen(text);
+
+    while (
+        end > text &&
+        (
+            end[-1] == ' ' ||
+            end[-1] == '\t'
+        )
+    )
+    {
+        end--;
+    }
+
+    *end = 0;
+
+    return text;
+}
+
+
+static bool wifiReadLine(
+    File &file,
+    char *buffer,
+    size_t bufferSize
+)
+{
+    size_t length = 0;
+    bool gotAnything = false;
+    bool overflow = false;
+
+    while (file.available())
+    {
+        int value =
+            file.read();
+
+        if (value < 0)
+        {
+            break;
+        }
+
+        char ch =
+            (char)value;
+
+        gotAnything = true;
+
+        if (ch == '\r')
+        {
+            continue;
+        }
+
+        if (ch == '\n')
+        {
+            break;
+        }
+
+        if (
+            length + 1 <
+            bufferSize
+        )
+        {
+            buffer[length++] =
+                ch;
+        }
+        else
+        {
+            overflow = true;
+        }
+    }
+
+    if (!gotAnything)
+    {
+        return false;
+    }
+
+    buffer[length] = 0;
+
+    /*
+     * Ignore an overlong line completely rather than
+     * parsing a truncated password or SSID.
+     */
+    if (overflow)
+    {
+        buffer[0] = 0;
+    }
+
+    return true;
+}
+
+
+static int wifiConfigIndex(
+    const char *key,
+    const char *prefix
+)
+{
+    size_t prefixLength =
+        strlen(prefix);
+
+    if (
+        strncmp(
+            key,
+            prefix,
+            prefixLength
+        ) != 0
+    )
+    {
+        return -1;
+    }
+
+    const char *number =
+        key + prefixLength;
+
+    if (*number == 0)
+    {
+        return -1;
+    }
+
+    int value = 0;
+
+    while (*number)
+    {
+        if (
+            *number < '0' ||
+            *number > '9'
+        )
+        {
+            return -1;
+        }
+
+        value =
+            value * 10 +
+            (*number - '0');
+
+        number++;
+    }
+
+    if (
+        value < 1 ||
+        value > WIFI_MAX_NETWORKS
+    )
+    {
+        return -1;
+    }
+
+    return value - 1;
+}
+
+
+static bool wifiLoadConfig(
+    WifiConfigEntry *entries
+)
+{
+    memset(
+        entries,
+        0,
+        sizeof(WifiConfigEntry) *
+        WIFI_MAX_NETWORKS
+    );
+
+    File file =
+        SD.open(
+            WIFI_CONFIG_FILE,
+            O_READ
+        );
+
+    if (!file)
+    {
+        return false;
+    }
+
+    char line[WIFI_LINE_SIZE];
+
+    while (
+        wifiReadLine(
+            file,
+            line,
+            sizeof(line)
+        )
+    )
+    {
+        char *text =
+            wifiTrim(line);
+
+        if (
+            *text == 0 ||
+            *text == '#' ||
+            *text == ';'
+        )
+        {
+            continue;
+        }
+
+        char *equals =
+            strchr(
+                text,
+                '='
+            );
+
+        if (!equals)
+        {
+            continue;
+        }
+
+        *equals = 0;
+
+        char *key =
+            wifiTrim(text);
+
+        char *value =
+            wifiTrim(
+                equals + 1
+            );
+
+        int index =
+            wifiConfigIndex(
+                key,
+                "SSID"
+            );
+
+        if (index >= 0)
+        {
+            strncpy(
+                entries[index].ssid,
+                value,
+                WIFI_SSID_SIZE - 1
+            );
+
+            entries[index].ssid[
+                WIFI_SSID_SIZE - 1
+            ] = 0;
+
+            entries[index].used =
+                entries[index].ssid[0] != 0;
+
+            continue;
+        }
+
+        index =
+            wifiConfigIndex(
+                key,
+                "PASS"
+            );
+
+        if (index >= 0)
+        {
+            strncpy(
+                entries[index].password,
+                value,
+                WIFI_PASS_SIZE - 1
+            );
+
+            entries[index].password[
+                WIFI_PASS_SIZE - 1
+            ] = 0;
+        }
+    }
+
+    file.close();
+
+    return true;
+}
+
+
+static bool wifiConnectFromConfig()
+{
+    WifiConfigEntry entries[
+        WIFI_MAX_NETWORKS
+    ];
+
+    _puts(
+        "WiFi: reading /WIFI.CFG\r\n"
+    );
+
+    if (!wifiLoadConfig(entries))
+    {
+        _puts(
+            "WiFi: no WIFI.CFG - offline\r\n"
+        );
+
+        WiFi.mode(
+            WIFI_OFF
+        );
+
+        return false;
+    }
+
+    bool haveNetwork = false;
+
+    WiFi.mode(
+        WIFI_STA
+    );
+
+    for (
+        int index = 0;
+        index < WIFI_MAX_NETWORKS;
+        index++
+    )
+    {
+        if (!entries[index].used)
+        {
+            continue;
+        }
+
+        haveNetwork = true;
+
+        _puts(
+            "WiFi: trying "
+        );
+
+        _puts(
+            entries[index].ssid
+        );
+
+        _puts(
+            "\r\n"
+        );
+
+        WiFi.disconnect(
+            false,
+            false
+        );
+
+        delay(100);
+
+        if (
+            entries[index].password[0]
+        )
+        {
+            WiFi.begin(
+                entries[index].ssid,
+                entries[index].password
+            );
+        }
+        else
+        {
+            /*
+             * Empty PASSn means an open network.
+             */
+            WiFi.begin(
+                entries[index].ssid
+            );
+        }
+
+        uint32_t started =
+            millis();
+
+        while (
+            WiFi.status() !=
+                WL_CONNECTED &&
+            (
+                uint32_t
+            )(
+                millis() -
+                started
+            ) <
+                WIFI_CONNECT_TIMEOUT_MS
+        )
+        {
+            terminalMaybeRefresh();
+
+            delay(50);
+        }
+
+        if (
+            WiFi.status() ==
+            WL_CONNECTED
+        )
+        {
+            _puts(
+                "WiFi: connected to "
+            );
+
+            _puts(
+                entries[index].ssid
+            );
+
+            _puts(
+                "\r\n"
+            );
+
+            IPAddress ip =
+                WiFi.localIP();
+
+            char address[32];
+
+            snprintf(
+                address,
+                sizeof(address),
+                "WiFi: IP %u.%u.%u.%u\r\n",
+                ip[0],
+                ip[1],
+                ip[2],
+                ip[3]
+            );
+
+            _puts(
+                address
+            );
+
+            WiFi.setAutoReconnect(
+                true
+            );
+
+            return true;
+        }
+    }
+
+    if (!haveNetwork)
+    {
+        _puts(
+            "WiFi: WIFI.CFG has no SSID entries\r\n"
+        );
+    }
+    else
+    {
+        _puts(
+            "WiFi: no configured network available\r\n"
+        );
+    }
+
+    _puts(
+        "WiFi: offline\r\n"
+    );
+
+    WiFi.disconnect(
+        false,
+        false
+    );
+
+    WiFi.mode(
+        WIFI_OFF
+    );
+
+    return false;
+}
+
+
+/*
+ * ====================================================
  * Start CP/M
  * ====================================================
  */
@@ -1962,7 +2440,11 @@ void setup()
     );
 
 
+    wifiConnectFromConfig();
+
+
     _puts(
+        "\r\n"
         "RunCPM "
     );
 
