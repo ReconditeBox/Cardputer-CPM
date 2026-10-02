@@ -1565,6 +1565,733 @@ static uint64_t cardputerPhysicalKeyMask()
 }
 
 
+
+static bool cardputerPhysicalKeyDown(
+    uint64_t mask,
+    uint8_t x,
+    uint8_t y
+)
+{
+    if (
+        x >= 14 ||
+        y >= 4
+    )
+    {
+        return false;
+    }
+
+    uint8_t bit =
+        (uint8_t)(
+            y * 14 +
+            x
+        );
+
+    return (
+        mask &
+        ((uint64_t)1 << bit)
+    ) != 0;
+}
+
+
+/*
+ * ====================================================
+ * Physical removable-media UI
+ *
+ * A: = Fn+A
+ * B: = Fn+B
+ *
+ * This UI is deliberately reachable only from the
+ * Cardputer keyboard. USB and Telnet input never call it.
+ * ====================================================
+ */
+
+#define MEDIA_MENU_MAX_ITEMS 32
+
+static char mediaMenuNames[MEDIA_MENU_MAX_ITEMS][CARDPUTER_MEDIA_NAME_MAX + 1];
+
+
+enum MediaMenuKey
+{
+    MEDIA_KEY_NONE = 0,
+    MEDIA_KEY_UP,
+    MEDIA_KEY_DOWN,
+    MEDIA_KEY_ENTER,
+    MEDIA_KEY_CANCEL
+};
+
+
+static void restoreCardputerScreen()
+{
+    if (localOutputEnabled())
+    {
+        terminalRenderAll(true);
+    }
+    else if (
+        cardConsoleMode ==
+        CARD_CONSOLE_USB
+    )
+    {
+        showUSBStatus();
+    }
+    else
+    {
+        showTelnetStatus();
+    }
+}
+
+
+static void mediaWaitForKeyRelease()
+{
+    while (true)
+    {
+        M5Cardputer.update();
+
+        if (
+            cardputerPhysicalKeyMask() ==
+            0
+        )
+        {
+            return;
+        }
+
+        delay(5);
+    }
+}
+
+
+static MediaMenuKey mediaWaitForKey()
+{
+    uint64_t previousMask = 0;
+
+    while (true)
+    {
+        M5Cardputer.update();
+
+        uint64_t mask =
+            cardputerPhysicalKeyMask();
+
+        if (
+            mask ==
+            previousMask
+        )
+        {
+            delay(5);
+            continue;
+        }
+
+        previousMask =
+            mask;
+
+        if (mask == 0)
+        {
+            continue;
+        }
+
+        Keyboard_Class::KeysState status =
+            M5Cardputer.Keyboard.keysState();
+
+        if (status.up)
+        {
+            return MEDIA_KEY_UP;
+        }
+
+        if (status.down)
+        {
+            return MEDIA_KEY_DOWN;
+        }
+
+        if (status.enter)
+        {
+            return MEDIA_KEY_ENTER;
+        }
+
+        if (
+            status.esc ||
+            status.backspace
+        )
+        {
+            return MEDIA_KEY_CANCEL;
+        }
+    }
+}
+
+
+static uint8_t mediaReadDirectoryList()
+{
+    uint8_t count = 0;
+
+    File mediaRoot =
+        SD.open(
+            CARDPUTER_MEDIA_ROOT,
+            O_READ
+        );
+
+    if (!mediaRoot)
+    {
+        return 0;
+    }
+
+    File entry;
+
+    while (
+        count < MEDIA_MENU_MAX_ITEMS &&
+        (entry = mediaRoot.openNextFile())
+    )
+    {
+        if (entry.isDirectory())
+        {
+            char name[CARDPUTER_MEDIA_NAME_MAX + 2];
+
+            memset(
+                name,
+                0,
+                sizeof(name)
+            );
+
+            entry.getName(
+                name,
+                sizeof(name)
+            );
+
+            size_t length =
+                strlen(name);
+
+            if (
+                length > 0 &&
+                length <= CARDPUTER_MEDIA_NAME_MAX &&
+                name[0] != '.'
+            )
+            {
+                strncpy(
+                    mediaMenuNames[count],
+                    name,
+                    CARDPUTER_MEDIA_NAME_MAX
+                );
+
+                mediaMenuNames[count][CARDPUTER_MEDIA_NAME_MAX] =
+                    0;
+
+                count++;
+            }
+        }
+
+        entry.close();
+    }
+
+    mediaRoot.close();
+
+    /*
+     * Keep chooser order deterministic rather than depending on
+     * FAT directory-entry order.
+     */
+    for (
+        uint8_t i = 0;
+        i < count;
+        i++
+    )
+    {
+        for (
+            uint8_t j = i + 1;
+            j < count;
+            j++
+        )
+        {
+            if (
+                strcmp(
+                    mediaMenuNames[i],
+                    mediaMenuNames[j]
+                ) > 0
+            )
+            {
+                char temp[CARDPUTER_MEDIA_NAME_MAX + 1];
+
+                strcpy(
+                    temp,
+                    mediaMenuNames[i]
+                );
+
+                strcpy(
+                    mediaMenuNames[i],
+                    mediaMenuNames[j]
+                );
+
+                strcpy(
+                    mediaMenuNames[j],
+                    temp
+                );
+            }
+        }
+    }
+
+    return count;
+}
+
+
+static void mediaInvalidateDrive(
+    uint8_t drive
+)
+{
+    if (drive >= 2)
+    {
+        return;
+    }
+
+    loginVector &=
+        ~((uint16)1 << drive);
+
+    roVector &=
+        ~((uint16)1 << drive);
+
+    allUsers =
+        FALSE;
+
+    allExtents =
+        FALSE;
+
+    if (rootdir)
+    {
+        rootdir.close();
+    }
+
+    if (userdir)
+    {
+        userdir.close();
+    }
+}
+
+
+static bool mediaMountDirectory(
+    uint8_t drive,
+    const char *name
+)
+{
+    if (
+        drive >= 2 ||
+        !name ||
+        !name[0]
+    )
+    {
+        return false;
+    }
+
+    char root[HOST_FILENAME_MAX];
+
+    int written =
+        snprintf(
+            root,
+            sizeof(root),
+            "%s/%s",
+            CARDPUTER_MEDIA_ROOT,
+            name
+        );
+
+    if (
+        written <= 0 ||
+        (size_t)written >= sizeof(root)
+    )
+    {
+        return false;
+    }
+
+    File dir =
+        SD.open(
+            root,
+            O_READ
+        );
+
+    if (
+        !dir ||
+        !dir.isDirectory()
+    )
+    {
+        if (dir)
+        {
+            dir.close();
+        }
+
+        return false;
+    }
+
+    dir.close();
+
+    strncpy(
+        cardputerMediaMount[drive],
+        name,
+        CARDPUTER_MEDIA_NAME_MAX
+    );
+
+    cardputerMediaMount[drive][CARDPUTER_MEDIA_NAME_MAX] =
+        0;
+
+    /*
+     * A media directory is a RunCPM drive root. Ensure user area 0
+     * exists so an otherwise empty newly-created medium is usable.
+     */
+    char userZero[HOST_FILENAME_MAX];
+
+    written =
+        snprintf(
+            userZero,
+            sizeof(userZero),
+            "%s/0",
+            root
+        );
+
+    if (
+        written > 0 &&
+        (size_t)written < sizeof(userZero)
+    )
+    {
+        SD.mkdir(userZero);
+    }
+
+    mediaInvalidateDrive(
+        drive
+    );
+
+    return true;
+}
+
+
+static void mediaEject(
+    uint8_t drive
+)
+{
+    if (drive >= 2)
+    {
+        return;
+    }
+
+    cardputerMediaMount[drive][0] =
+        0;
+
+    mediaInvalidateDrive(
+        drive
+    );
+}
+
+
+static void mediaDrawEjectPrompt(
+    uint8_t drive
+)
+{
+    M5Cardputer.Display.fillScreen(
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextColor(
+        GREEN,
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextSize(1);
+
+    M5Cardputer.Display.setCursor(
+        0,
+        0
+    );
+
+    M5Cardputer.Display.printf(
+        "DRIVE %c:\n",
+        'A' + drive
+    );
+
+    M5Cardputer.Display.println(
+        "--------"
+    );
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.print(
+        "Mounted: "
+    );
+
+    M5Cardputer.Display.println(
+        cardputerMediaName(drive)
+    );
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.println(
+        "Eject this media?"
+    );
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.println(
+        "ENTER  eject"
+    );
+
+    M5Cardputer.Display.println(
+        "ESC    cancel"
+    );
+}
+
+
+static void mediaDrawChooser(
+    uint8_t drive,
+    uint8_t count,
+    uint8_t selected
+)
+{
+    const uint8_t firstRow = 5;
+    const uint8_t visibleRows = 11;
+
+    uint8_t first =
+        0;
+
+    if (
+        selected >=
+        visibleRows
+    )
+    {
+        first =
+            selected -
+            visibleRows +
+            1;
+    }
+
+    M5Cardputer.Display.fillScreen(
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextColor(
+        GREEN,
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextSize(1);
+
+    M5Cardputer.Display.setCursor(
+        0,
+        0
+    );
+
+    M5Cardputer.Display.printf(
+        "INSERT DRIVE %c:\n",
+        'A' + drive
+    );
+
+    M5Cardputer.Display.println(
+        "Fn+arrows  ENTER  ESC"
+    );
+
+    M5Cardputer.Display.println(
+        "----------------------"
+    );
+
+    if (count == 0)
+    {
+        M5Cardputer.Display.println();
+        M5Cardputer.Display.println(
+            "No directories in MEDIA/"
+        );
+
+        return;
+    }
+
+    for (
+        uint8_t row = 0;
+        row < visibleRows;
+        row++
+    )
+    {
+        uint8_t index =
+            first + row;
+
+        if (index >= count)
+        {
+            break;
+        }
+
+        int y =
+            (firstRow + row) *
+            CHAR_H;
+
+        if (index == selected)
+        {
+            M5Cardputer.Display.fillRect(
+                0,
+                y,
+                M5Cardputer.Display.width(),
+                CHAR_H,
+                GREEN
+            );
+
+            M5Cardputer.Display.setTextColor(
+                BLACK,
+                GREEN
+            );
+        }
+        else
+        {
+            M5Cardputer.Display.setTextColor(
+                GREEN,
+                BLACK
+            );
+        }
+
+        M5Cardputer.Display.setCursor(
+            0,
+            y
+        );
+
+        M5Cardputer.Display.print(
+            index == selected
+                ? "> "
+                : "  "
+        );
+
+        M5Cardputer.Display.print(
+            mediaMenuNames[index]
+        );
+    }
+
+    M5Cardputer.Display.setTextColor(
+        GREEN,
+        BLACK
+    );
+}
+
+
+static void managePhysicalMediaSlot(
+    uint8_t drive
+)
+{
+    if (drive >= 2)
+    {
+        return;
+    }
+
+    /*
+     * Fn+A / Fn+B is still held when we enter. Do not let that
+     * keystroke immediately act on the menu.
+     */
+    mediaWaitForKeyRelease();
+
+    if (cardputerMediaMounted(drive))
+    {
+        mediaDrawEjectPrompt(
+            drive
+        );
+
+        while (true)
+        {
+            MediaMenuKey key =
+                mediaWaitForKey();
+
+            if (
+                key ==
+                MEDIA_KEY_ENTER
+            )
+            {
+                mediaEject(
+                    drive
+                );
+
+                break;
+            }
+
+            if (
+                key ==
+                MEDIA_KEY_CANCEL
+            )
+            {
+                break;
+            }
+
+            mediaWaitForKeyRelease();
+        }
+
+        mediaWaitForKeyRelease();
+        restoreCardputerScreen();
+        return;
+    }
+
+    uint8_t count =
+        mediaReadDirectoryList();
+
+    uint8_t selected =
+        0;
+
+    mediaDrawChooser(
+        drive,
+        count,
+        selected
+    );
+
+    while (true)
+    {
+        MediaMenuKey key =
+            mediaWaitForKey();
+
+        if (
+            key ==
+            MEDIA_KEY_CANCEL
+        )
+        {
+            break;
+        }
+
+        if (
+            count &&
+            key ==
+            MEDIA_KEY_UP
+        )
+        {
+            if (selected > 0)
+            {
+                selected--;
+            }
+
+            mediaDrawChooser(
+                drive,
+                count,
+                selected
+            );
+        }
+        else if (
+            count &&
+            key ==
+            MEDIA_KEY_DOWN
+        )
+        {
+            if (
+                selected + 1 <
+                count
+            )
+            {
+                selected++;
+            }
+
+            mediaDrawChooser(
+                drive,
+                count,
+                selected
+            );
+        }
+        else if (
+            count &&
+            key ==
+            MEDIA_KEY_ENTER
+        )
+        {
+            mediaMountDirectory(
+                drive,
+                mediaMenuNames[selected]
+            );
+
+            break;
+        }
+
+        mediaWaitForKeyRelease();
+    }
+
+    mediaWaitForKeyRelease();
+    restoreCardputerScreen();
+}
+
+
 static void pollCardputerKeyboard()
 {
     static uint64_t previousKeyMask = 0;
@@ -1629,6 +2356,45 @@ static void pollCardputerKeyboard()
             CARD_CONSOLE_LOCAL
         );
 
+        return;
+    }
+
+
+    /*
+     * Physical-only removable drive controls.
+     *
+     * These are detected from exact matrix positions rather than
+     * translated characters and are handled before console routing,
+     * so they remain local even while USB or Telnet owns CON:.
+     *
+     * Fn+A: row 2, column 2
+     * Fn+B: row 3, column 7
+     */
+    if (
+        status.fn &&
+        cardputerPhysicalKeyDown(
+            currentKeyMask,
+            2,
+            2
+        )
+    )
+    {
+        managePhysicalMediaSlot(0);
+        previousKeyMask = 0;
+        return;
+    }
+
+    if (
+        status.fn &&
+        cardputerPhysicalKeyDown(
+            currentKeyMask,
+            7,
+            3
+        )
+    )
+    {
+        managePhysicalMediaSlot(1);
+        previousKeyMask = 0;
         return;
     }
 
@@ -3437,6 +4203,16 @@ void setup()
     _puts(
         "SD card OK\r\n"
     );
+
+
+    /*
+     * Removable A:/B: media live as directories below MEDIA/.
+     * Both slots intentionally start empty on every power-up.
+     */
+    if (!SD.exists(CARDPUTER_MEDIA_ROOT))
+    {
+        SD.mkdir(CARDPUTER_MEDIA_ROOT);
+    }
 
 
     wifiConnectFromConfig();
