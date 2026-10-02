@@ -22,6 +22,75 @@ SdFat SD;
 #define board_esp32
 #define board_digital_io
 #define board_cardputer_setdef
+#define board_cardputer_removable_media
+
+/*
+ * Cardputer removable-media slots.
+ *
+ * Logical CP/M drives A: and B: are physical-style removable slots.
+ * Each slot can be mounted to a directory below MEDIA/ on the SD card.
+ * The slots start empty on every power-up.
+ */
+#define CARDPUTER_MEDIA_ROOT "MEDIA"
+#define CARDPUTER_MEDIA_NAME_MAX 31
+
+static char cardputerMediaMount[2][CARDPUTER_MEDIA_NAME_MAX + 1] =
+{
+    "",
+    ""
+};
+
+static bool cardputerMediaMounted(uint8 drive)
+{
+    return (
+        drive < 2 &&
+        cardputerMediaMount[drive][0] != 0
+    );
+}
+
+static const char *cardputerMediaName(uint8 drive)
+{
+    if (
+        drive >= 2 ||
+        !cardputerMediaMounted(drive)
+    )
+    {
+        return "";
+    }
+
+    return cardputerMediaMount[drive];
+}
+
+static bool cardputerMediaRootPath(
+    uint8 drive,
+    char *path,
+    size_t pathSize
+)
+{
+    if (
+        drive >= 2 ||
+        !cardputerMediaMounted(drive) ||
+        !path ||
+        pathSize == 0
+    )
+    {
+        return false;
+    }
+
+    int written =
+        snprintf(
+            path,
+            pathSize,
+            "%s/%s",
+            CARDPUTER_MEDIA_ROOT,
+            cardputerMediaMount[drive]
+        );
+
+    return (
+        written > 0 &&
+        (size_t)written < pathSize
+    );
+}
 
 /*
  * RunCPM Arduino abstraction expects an LED definition.
