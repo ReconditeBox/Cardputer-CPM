@@ -2070,6 +2070,17 @@ void _Bdos(void) {
 
 #endif // if defined board_stm32
 
+#if defined board_cardputer_setdef
+    /*
+       C = 233 (E9h) : Cardputer SETDEF command
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 233: {
+        HL = cardputerSetdefBdos(DE);
+        break;
+    }
+#endif
+
     /*
        C = 248 (F8h) : Milliseconds Uptime
        Returns the number of milliseconds (since the board started).
