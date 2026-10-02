@@ -27,7 +27,7 @@
 
 // CCP global variables
 uint8 pageSize = DEFAULT_PAGE_SIZE;     // for TYPE
-uint8 currentDrive = 0;                 // 0 -> 15 = A -> P (Current drive for the CCP)
+uint8 currentDrive = SYSTEM_DRIVE;      // 0 -> 15 = A -> P (Current drive for the CCP)
 uint8 paramDrive = 0;                   // 0 -> 15 = A -> P (Drive for the first file parameter)
 uint8 currentUser = 0;                  // 0 -> 15 (Current user area to access)
 bool submitFlag = FALSE;                // Submit Flag
@@ -1209,7 +1209,7 @@ uint8 _ccp_ext(void) {
                                             // drive, current or specified
         if (!found) {                       // If not found
             if (!drive) {                   // and the search was on the default drive
-                _RamWrite(CmdFCB, 0x01);    // Then look on drive A: user 0
+                _RamWrite(CmdFCB, SYSTEM_FCB_DRIVE); // Then look on system drive, user 0
                 if (currentUser) {
                     user = currentUser;           // Save the current user
                     _ccp_bdos(F_USERNUM, 0x0000); // then set it to 0
@@ -1241,7 +1241,7 @@ uint8 _ccp_ext(void) {
                                             // drive, current or specified
         if (!found) {                       // If not found
             if (!drive) {                   // and the search was on the default drive
-                _RamWrite(CmdFCB, 0x01);    // Then look on drive A: user 0
+                _RamWrite(CmdFCB, SYSTEM_FCB_DRIVE); // Then look on system drive, user 0
                 if (currentUser) {
                     user = currentUser;           // Save the current user
                     _ccp_bdos(F_USERNUM, 0x0000); // then set it to 0
@@ -1291,7 +1291,7 @@ uint8 _ccp_ext(void) {
                                              // drive, current or specified
             if (!found) {                    // If not found
                 if (!drive) {                // and the search was on the default drive
-                    _RamWrite(CmdFCB, 0x01); // Then look on drive A: user 0
+                    _RamWrite(CmdFCB, SYSTEM_FCB_DRIVE); // Then look on system drive, user 0
                     if (currentUser) {
                         user = currentUser;           // Save the current user
                         _ccp_bdos(F_USERNUM, 0x0000); // then set it to 0
@@ -1451,7 +1451,7 @@ bool _ccp_parseDriveUser(bool *errorFlag) {
                               (_RamRead(DSKByte) & 0xf0) | cDrive);
                     _ccp_bdos(DRV_SET, cDrive);
                     if (Status)
-                        currentDrive = 0;
+                        currentDrive = SYSTEM_DRIVE;
                 }
                 if (tUser != currentUser) {
                     currentUser = tUser;
