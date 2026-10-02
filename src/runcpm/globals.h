@@ -27,6 +27,24 @@
 #define SYSTEM_DRIVE_LETTER 'C'
 #define SYSTEM_DRIVE_PATH "C/0/"
 
+/*
+ * SETDEF program search chain.
+ *
+ * 0xFF means "*" (the current/default drive).
+ * Default: current drive first, then system drive C:.
+ */
+#define SETDEF_MAX_DRIVES 4
+#define SETDEF_CURRENT_DRIVE 0xFF
+
+static uint8 setdefDriveCount = 2;
+static uint8 setdefDriveChain[SETDEF_MAX_DRIVES] =
+{
+    SETDEF_CURRENT_DRIVE,
+    SYSTEM_DRIVE,
+    0,
+    0
+};
+
 /* Definitions for enabling PUN: and LST: devices */
 #define USE_PUN // The pun.txt and lst.txt files will appear on the system drive, user 0
 #define USE_LST
