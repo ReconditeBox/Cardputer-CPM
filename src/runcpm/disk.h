@@ -277,6 +277,91 @@ void _HostnameToFCBname(uint8 *from, uint8 *to) {
     *to = 0;
 }
 
+// Creates a fake directory entry for the current dmaAddr FCB
+void _mockupDirEntry(uint8 mode) {
+    CPM_DIRENTRY *DirEntry = (CPM_DIRENTRY *)_RamSysAddr(dmaAddr);
+    uint8 blocks, i;
+
+    for (i = 0; i < sizeof(CPM_DIRENTRY); ++i)
+        _RamWrite(dmaAddr + i, 0x00); // zero out directory entry
+    unsigned char *shortName;
+    if (mode) {
+        shortName = (unsigned char *)&findNextDirName[strlen(FILEBASE)];
+    } else {
+        shortName = (unsigned char *)&findNextDirName[0];
+    }
+    _HostnameToFCB(dmaAddr, (uint8 *)shortName);
+
+    if (allUsers) {
+        DirEntry->dr = currFindUser; // set user code for return
+    } else {
+        DirEntry->dr = userCode;
+    }
+
+    /* Ensure S1 is deterministic (zero) — we already zeroed the entry above,
+       but make the intent explicit so callers/readers aren't surprised. */
+    DirEntry->s1 = 0;
+
+    // does file fit in a single directory entry?
+    if (fileExtents <= extentsPerDirEntry) {
+        if (fileExtents) {
+            DirEntry->ex = (fileExtents - 1 + fileExtentsUsed) % (MaxEX + 1);
+            DirEntry->s2 = (fileExtents - 1 + fileExtentsUsed) / (MaxEX + 1);
+            DirEntry->rc = fileRecords - (BlkEX * (fileExtents - 1));
+        }
+        blocks = (fileRecords >> blockShift) + ((fileRecords & blockMask) ? 1 : 0);
+        fileRecords = 0;
+        fileExtents = 0;
+        fileExtentsUsed = 0;
+    } else { // no, max out the directory entry
+        DirEntry->ex = (extentsPerDirEntry - 1 + fileExtentsUsed) % (MaxEX + 1);
+        DirEntry->s2 = (extentsPerDirEntry - 1 + fileExtentsUsed) / (MaxEX + 1);
+        DirEntry->rc = BlkEX;
+        blocks = numAllocBlocks < 256 ? 16 : 8;
+        // update remaining records and extents for next call
+        fileRecords -= BlkEX * extentsPerDirEntry;
+        fileExtents -= extentsPerDirEntry;
+        fileExtentsUsed += extentsPerDirEntry;
+    }
+
+    /* SAFETY: clamp blocks so we never overflow DirEntry->al[].
+       On small disks AL is 16 bytes (one byte per block),
+       on large disks AL is 16 bytes but stored as 8 16-bit values (pairs). */
+    uint8 maxBlocks = (numAllocBlocks < 256) ? 16 : 8;
+    if (blocks > maxBlocks)
+        blocks = maxBlocks;
+
+    // phoney up an appropriate number of allocation blocks
+    if (numAllocBlocks < 256) {
+        for (i = 0; i < blocks; ++i)
+            DirEntry->al[i] = (uint8)firstFreeAllocBlock++;
+    } else {
+        for (i = 0; i < 2 * blocks; i += 2) {
+            DirEntry->al[i] = firstFreeAllocBlock & 0xFF;
+            DirEntry->al[i + 1] = firstFreeAllocBlock >> 8;
+            ++firstFreeAllocBlock;
+        }
+    }
+}
+
+// Matches a FCB name to a search pattern
+uint8 match(uint8 *fcbname, uint8 *pattern) {
+    uint8 result = 1;
+    uint8 i;
+
+    for (i = 0; i < 12; ++i) {
+        if (*pattern == '?' || *pattern == *fcbname) {
+            ++pattern;
+            ++fcbname;
+            continue;
+        } else {
+            result = 0;
+            break;
+        }
+    }
+    return (result);
+}
+
 // Returns the size of a file
 long _FileSize(uint16 fcbaddr) {
     CPM_FCB *F = (CPM_FCB *)_RamSysAddr(fcbaddr);
