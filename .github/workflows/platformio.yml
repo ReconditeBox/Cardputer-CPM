@@ -2,8 +2,6 @@ name: PlatformIO Build
 
 on:
   push:
-    branches:
-      - telnet-console
   workflow_dispatch:
 
 jobs:
