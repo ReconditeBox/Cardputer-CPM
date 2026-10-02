@@ -369,3 +369,44 @@ C/0/PROFILE.SUB
 
 and edit it as required.
 
+## Removable A: and B: media
+
+CP/M drives **A:** and **B:** are removable-media slots backed by directories below `MEDIA/` on the SD card. Drives **C:** through **P:** keep their normal fixed RunCPM directory layout.
+
+Both removable slots start empty after power-up. Example SD-card layout:
+
+```text
+MEDIA/
+    WORDSTAR/
+        0/
+            WS.COM
+            ...
+    BASIC/
+        0/
+            ...
+    GAMES/
+        0/
+            ...
+```
+
+Each directory directly below `MEDIA/` represents one removable disk. Inside it, RunCPM user areas use the usual hexadecimal subdirectories `0` through `F`. User area `0` is created automatically when a medium is first mounted if it does not already exist.
+
+Media control is deliberately **physical-device-only**:
+
+```text
+Fn+A    manage drive A:
+Fn+B    manage drive B:
+```
+
+If the selected drive is empty, the Cardputer LCD shows the directories available in `MEDIA/`. Use the Cardputer cursor keys to choose a directory and **Enter** to mount it; Escape or Backspace cancels.
+
+If media is already mounted, **Fn+A** or **Fn+B** shows an eject confirmation before removing it.
+
+USB and Telnet users can read and write whichever A:/B: media is already mounted, but there is no USB, Telnet, CP/M command, or BDOS interface for inserting or ejecting media. Only the physical Cardputer keyboard can change the media.
+
+Mounting or ejecting invalidates RunCPM's cached login/read-only state for that drive so the next access sees the new media.
+
+This implementation supports **directory-backed media only**. Files with a `.DSK` extension are ignored by the chooser for now.
+
+Stock CP/M 2.2 `SUBMIT.COM` normally creates `A:$$$.SUB`. The firmware redirects only that legacy temporary file to the fixed C: system drive internally, so SUBMIT and `PROFILE.SUB` continue to work even when A: is empty or contains removable media.
+
