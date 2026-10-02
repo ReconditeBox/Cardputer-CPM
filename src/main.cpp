@@ -3563,32 +3563,35 @@ void setup()
 
         if (firstBoot)
         {
+            firstBoot =
+                FALSE;
+
+
             if (_sys_exists(
-                (uint8 *)AUTOEXEC
+                (uint8 *)STARTUP_PROFILE_PATH
             ))
             {
+                const char *startup =
+                    STARTUP_PROFILE_COMMAND;
+
+
                 uint16 cmd =
                     CCPaddr + 8;
-
-
-                uint8 bytesread =
-                    (uint8)_RamLoad(
-                        (uint8 *)AUTOEXEC,
-                        cmd,
-                        125
-                    );
 
 
                 uint8 blen = 0;
 
 
                 while (
-                    blen < bytesread &&
-                    _RamRead(
-                        cmd + blen
-                    ) > 31
+                    startup[blen] &&
+                    blen < 125
                 )
                 {
+                    _RamWrite(
+                        cmd + blen,
+                        (uint8)startup[blen]
+                    );
+
                     blen++;
                 }
 
@@ -3600,16 +3603,9 @@ void setup()
 
 
                 _RamWrite(
-                    --cmd,
+                    CCPaddr + 7,
                     blen
                 );
-            }
-
-
-            if (BOOTONLY)
-            {
-                firstBoot =
-                    FALSE;
             }
         }
 
