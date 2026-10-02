@@ -230,3 +230,28 @@ Cardputer-specific integration and console work are maintained in this repositor
 Cardputer-CPM is distributed under the MIT License. See the root `LICENSE` file.
 
 Portions derived from RunCPM remain subject to the RunCPM MIT copyright and licence notice in `src/runcpm/LICENSE`.
+
+## WiFi configuration
+
+WiFi is configured from a plain-text file named `WIFI.CFG` in the root of the SD card.
+
+Example:
+
+```text
+SSID1=Home Network
+PASS1=first-password
+
+SSID2=Phone Hotspot
+PASS2=second-password
+```
+
+Entries are tried in numeric order. The first network that connects is used. Up to 10 entries (`SSID1` through `SSID10`) are supported.
+
+Blank lines and lines beginning with `#` or `;` are ignored. An empty `PASSn=` selects an open network.
+
+If `WIFI.CFG` is missing, contains no usable SSIDs, or none of the configured networks can be reached, the machine continues booting CP/M offline.
+
+Passwords are stored in plain text on the SD card. The firmware never prints passwords to the console.
+
+A template is included as `WIFI.CFG.EXAMPLE`. Copy it to the SD-card root, rename it to `WIFI.CFG`, and enter your own SSIDs and passwords.
+
