@@ -323,10 +323,16 @@ static uint8 multiRecordCount = 1; /* default = 1 record */
 
 #define tohex(x) ((x) < 10 ? (x) + 48 : (x) + 87)
 
-/* definition of an autoexec functionality */
-static uint8 firstBoot = TRUE;  // True if this is the first boot
-#define AUTOEXEC "AUTOEXEC.TXT" // Name of the autoexec file
-#define BOOTONLY FALSE          // If TRUE, the autoexec file will only be loaded on the first boot
+/*
+ * Cold-boot profile.
+ *
+ * If C/0/PROFILE.SUB exists, the CCP automatically runs C:PROFILE
+ * once on the first CCP entry after power-up/reset. Warm boots do not
+ * run it again.
+ */
+static uint8 firstBoot = TRUE;
+#define STARTUP_PROFILE_PATH SYSTEM_DRIVE_PATH "PROFILE.SUB"
+#define STARTUP_PROFILE_COMMAND "C:PROFILE"
 
 #ifdef CPM3
 /* BDOS function 47 (Chain To Program) state: the command line a program
