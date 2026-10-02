@@ -21,6 +21,7 @@ SdFat SD;
 
 #define board_esp32
 #define board_digital_io
+#define board_cardputer_setdef
 
 /*
  * RunCPM Arduino abstraction expects an LED definition.
@@ -36,6 +37,7 @@ SdFat SD;
  * RunCPM BDOS function 232 calls esp32bdos(DE).
  */
 uint8 cardputerEsp32Bdos(uint16 value);
+uint16 cardputerSetdefBdos(uint16 commandTail);
 
 
 uint8 esp32bdos(uint16 value)
