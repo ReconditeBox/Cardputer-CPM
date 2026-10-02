@@ -75,6 +75,7 @@ static DirFat_t fileDirEntry;
  * Host path support for Cardputer removable A:/B: media.
  */
 static uint8 _sysLastLogicalDrive = SYSTEM_DRIVE;
+static uint8 _sysSearchLogicalDrive = SYSTEM_DRIVE;
 
 static bool _sysBuildDriveRoot(
     uint8 drive,
@@ -598,7 +599,7 @@ uint8 _findnext(uint8 isdir) {
 #ifdef board_cardputer_removable_media
                 _RamWrite(
                     tmpFCB,
-                    _sysLastLogicalDrive + 1
+                    _sysSearchLogicalDrive + 1
                 );
 #else
                 _RamWrite(tmpFCB, filename[0] - '@');
@@ -615,6 +616,9 @@ uint8 _findnext(uint8 isdir) {
 
 uint8 _findfirst(uint8 isdir) {
 #ifdef board_cardputer_removable_media
+    _sysSearchLogicalDrive =
+        _sysLastLogicalDrive;
+
     uint8 path[HOST_FILENAME_MAX];
 
     strncpy(
@@ -699,10 +703,13 @@ uint8 _findnextallusers(uint8 isdir) {
 
 uint8 _findfirstallusers(uint8 isdir) {
 #ifdef board_cardputer_removable_media
+    _sysSearchLogicalDrive =
+        _sysLastLogicalDrive;
+
     uint8 path[HOST_FILENAME_MAX];
 
     if (!_sysBuildDriveRoot(
-        _sysLastLogicalDrive,
+        _sysSearchLogicalDrive,
         path,
         sizeof(path)
     ))
