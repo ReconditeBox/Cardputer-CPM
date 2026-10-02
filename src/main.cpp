@@ -52,9 +52,10 @@
 
 enum CardConsoleMode
 {
-    CARD_CONSOLE_LOCAL = 0,
-    CARD_CONSOLE_USB   = 1,
-    CARD_CONSOLE_BOTH  = 2
+    CARD_CONSOLE_LOCAL  = 0,
+    CARD_CONSOLE_USB    = 1,
+    CARD_CONSOLE_BOTH   = 2,
+    CARD_CONSOLE_TELNET = 3
 };
 
 /*
@@ -65,6 +66,38 @@ enum CardConsoleMode
  */
 static uint8_t cardConsoleMode =
     CARD_CONSOLE_LOCAL;
+
+
+/*
+ * ====================================================
+ * Telnet console
+ * ====================================================
+ */
+
+#define TELNET_PORT 23
+
+static WiFiServer telnetServer(
+    TELNET_PORT
+);
+
+static WiFiClient telnetClient;
+
+static bool telnetServerStarted = false;
+static bool lastTelnetWasCR = false;
+
+enum TelnetInputState
+{
+    TELNET_DATA = 0,
+    TELNET_IAC,
+    TELNET_OPTION,
+    TELNET_SUBNEGOTIATION,
+    TELNET_SUBNEGOTIATION_IAC
+};
+
+static uint8_t telnetInputState =
+    TELNET_DATA;
+
+static uint8_t telnetIacCommand = 0;
 
 
 /*
@@ -201,6 +234,24 @@ static bool usbInputEnabled()
     return (
         cardConsoleMode == CARD_CONSOLE_USB ||
         cardConsoleMode == CARD_CONSOLE_BOTH
+    );
+}
+
+
+static bool telnetOutputEnabled()
+{
+    return (
+        cardConsoleMode ==
+        CARD_CONSOLE_TELNET
+    );
+}
+
+
+static bool telnetInputEnabled()
+{
+    return (
+        cardConsoleMode ==
+        CARD_CONSOLE_TELNET
     );
 }
 
@@ -1214,6 +1265,78 @@ static void showUSBStatus()
 
 /*
  * ====================================================
+ * Telnet status screen
+ * ====================================================
+ */
+
+static void showTelnetStatus()
+{
+    M5Cardputer.Display.fillScreen(
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextColor(
+        GREEN,
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextSize(1);
+
+    M5Cardputer.Display.setCursor(
+        0,
+        0
+    );
+
+    M5Cardputer.Display.println(
+        "CP/M TELNET CONSOLE"
+    );
+
+    M5Cardputer.Display.println(
+        "------------------"
+    );
+
+    M5Cardputer.Display.println();
+
+    IPAddress ip =
+        WiFi.localIP();
+
+    M5Cardputer.Display.printf(
+        "%u.%u.%u.%u:%u\n",
+        ip[0],
+        ip[1],
+        ip[2],
+        ip[3],
+        TELNET_PORT
+    );
+
+    M5Cardputer.Display.println();
+
+    if (
+        telnetClient &&
+        telnetClient.connected()
+    )
+    {
+        M5Cardputer.Display.println(
+            "Telnet client connected"
+        );
+    }
+    else
+    {
+        M5Cardputer.Display.println(
+            "Waiting for client..."
+        );
+    }
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.println(
+        "Fn+= = LOCAL"
+    );
+}
+
+
+/*
+ * ====================================================
  * Change console route
  * ====================================================
  */
@@ -1225,7 +1348,8 @@ static void setCardConsoleMode(
     if (
         mode != CARD_CONSOLE_LOCAL &&
         mode != CARD_CONSOLE_USB &&
-        mode != CARD_CONSOLE_BOTH
+        mode != CARD_CONSOLE_BOTH &&
+        mode != CARD_CONSOLE_TELNET
     )
     {
         return;
@@ -1233,11 +1357,55 @@ static void setCardConsoleMode(
 
 
     if (
+        mode == CARD_CONSOLE_TELNET &&
+        (
+            WiFi.status() !=
+                WL_CONNECTED ||
+            !telnetServerStarted
+        )
+    )
+    {
+        _puts(
+            "\r\n"
+            "[TELNET unavailable: WiFi is offline]"
+            "\r\n"
+        );
+
+        return;
+    }
+
+
+    uint8_t previousMode =
+        cardConsoleMode;
+
+
+    if (
         mode == CARD_CONSOLE_LOCAL &&
-        usbOutputEnabled()
+        (
+            previousMode ==
+                CARD_CONSOLE_USB ||
+            previousMode ==
+                CARD_CONSOLE_BOTH
+        )
     )
     {
         Serial.print(
+            "\r\n"
+            "[Switching to LOCAL console]"
+            "\r\n"
+        );
+    }
+
+
+    if (
+        mode == CARD_CONSOLE_LOCAL &&
+        previousMode ==
+            CARD_CONSOLE_TELNET &&
+        telnetClient &&
+        telnetClient.connected()
+    )
+    {
+        telnetClient.print(
             "\r\n"
             "[Switching to LOCAL console]"
             "\r\n"
@@ -1273,7 +1441,10 @@ static void setCardConsoleMode(
             "\r\n"
         );
     }
-    else
+    else if (
+        cardConsoleMode ==
+        CARD_CONSOLE_BOTH
+    )
     {
         terminalRenderAll(true);
 
@@ -1282,6 +1453,27 @@ static void setCardConsoleMode(
             "[BOTH consoles active]"
             "\r\n"
         );
+    }
+    else
+    {
+        showTelnetStatus();
+
+        if (
+            telnetClient &&
+            telnetClient.connected()
+        )
+        {
+            telnetClient.print(
+                "\r\n"
+                "[TELNET console active]"
+                "\r\n"
+            );
+
+            telnetClient.print(
+                "[Fn+= on Cardputer returns LOCAL]"
+                "\r\n"
+            );
+        }
     }
 }
 
@@ -1295,6 +1487,7 @@ static void setCardConsoleMode(
  * DE = 0      LOCAL
  * DE = 1      USB
  * DE = 2      BOTH
+ * DE = 3      TELNET
  * DE = FFFF   query
  * ====================================================
  */
@@ -1318,7 +1511,7 @@ uint8 cardputerEsp32Bdos(
 
     if (
         requested <=
-        CARD_CONSOLE_BOTH
+        CARD_CONSOLE_TELNET
     )
     {
         setCardConsoleMode(
@@ -1699,6 +1892,402 @@ static void pollUSBKeyboard()
 }
 
 
+static void telnetWriteNegotiation(
+    uint8_t command,
+    uint8_t option
+)
+{
+    if (
+        !telnetClient ||
+        !telnetClient.connected()
+    )
+    {
+        return;
+    }
+
+    uint8_t bytes[3];
+
+    bytes[0] = 0xFF;
+    bytes[1] = command;
+    bytes[2] = option;
+
+    telnetClient.write(
+        bytes,
+        sizeof(bytes)
+    );
+}
+
+
+static void telnetResetInputState()
+{
+    lastTelnetWasCR = false;
+    telnetInputState = TELNET_DATA;
+    telnetIacCommand = 0;
+}
+
+
+static void telnetClientConnected()
+{
+    telnetResetInputState();
+
+    /*
+     * Tell the client that the server performs echoing
+     * through CP/M and suppress Telnet go-ahead traffic.
+     */
+    telnetWriteNegotiation(
+        0xFB,
+        0x01
+    );
+
+    telnetWriteNegotiation(
+        0xFB,
+        0x03
+    );
+
+    telnetWriteNegotiation(
+        0xFD,
+        0x03
+    );
+
+    telnetClient.print(
+        "\r\n"
+        "Cardputer CP/M Telnet\r\n"
+    );
+
+    if (
+        cardConsoleMode ==
+        CARD_CONSOLE_TELNET
+    )
+    {
+        telnetClient.print(
+            "CON: routed to TELNET\r\n"
+            "Press RETURN if a CP/M prompt is not visible.\r\n"
+        );
+
+        showTelnetStatus();
+    }
+    else
+    {
+        telnetClient.print(
+            "Connected. Run TELNET.COM on the Cardputer "
+            "to route CP/M CON: here.\r\n"
+        );
+    }
+}
+
+
+static void telnetServiceConnection()
+{
+    if (!telnetServerStarted)
+    {
+        return;
+    }
+
+    WiFiClient incoming =
+        telnetServer.available();
+
+    if (incoming)
+    {
+        if (
+            telnetClient &&
+            telnetClient.connected()
+        )
+        {
+            incoming.print(
+                "\r\n"
+                "Cardputer CP/M Telnet is already in use.\r\n"
+            );
+
+            incoming.stop();
+        }
+        else
+        {
+            telnetClient.stop();
+
+            telnetClient =
+                incoming;
+
+            telnetClient.setNoDelay(
+                true
+            );
+
+            telnetClientConnected();
+        }
+    }
+
+
+    if (
+        telnetClient &&
+        !telnetClient.connected()
+    )
+    {
+        telnetClient.stop();
+
+        telnetResetInputState();
+
+        if (
+            cardConsoleMode ==
+            CARD_CONSOLE_TELNET
+        )
+        {
+            setCardConsoleMode(
+                CARD_CONSOLE_LOCAL
+            );
+        }
+    }
+}
+
+
+static void telnetQueueDataByte(
+    uint8_t ch
+)
+{
+    /*
+     * PC DEL -> CP/M backspace.
+     */
+    if (ch == 0x7F)
+    {
+        ch = 0x08;
+    }
+
+
+    /*
+     * Telnet commonly sends CR LF or CR NUL.
+     * CP/M wants a single CR.
+     */
+    if (ch == 0x0D)
+    {
+        queueKey(0x0D);
+
+        lastTelnetWasCR = true;
+
+        return;
+    }
+
+
+    if (
+        ch == 0x0A ||
+        ch == 0x00
+    )
+    {
+        if (lastTelnetWasCR)
+        {
+            lastTelnetWasCR = false;
+            return;
+        }
+
+        if (ch == 0x0A)
+        {
+            queueKey(0x0D);
+        }
+
+        return;
+    }
+
+
+    lastTelnetWasCR = false;
+
+    queueKey(ch);
+}
+
+
+static void pollTelnetKeyboard()
+{
+    telnetServiceConnection();
+
+
+    if (
+        !telnetClient ||
+        !telnetClient.connected()
+    )
+    {
+        return;
+    }
+
+
+    while (telnetClient.available())
+    {
+        int value =
+            telnetClient.read();
+
+        if (value < 0)
+        {
+            break;
+        }
+
+        uint8_t ch =
+            (uint8_t)value;
+
+
+        if (
+            telnetInputState ==
+            TELNET_DATA
+        )
+        {
+            if (ch == 0xFF)
+            {
+                telnetInputState =
+                    TELNET_IAC;
+
+                continue;
+            }
+
+            if (telnetInputEnabled())
+            {
+                telnetQueueDataByte(ch);
+            }
+
+            continue;
+        }
+
+
+        if (
+            telnetInputState ==
+            TELNET_IAC
+        )
+        {
+            if (ch == 0xFF)
+            {
+                if (telnetInputEnabled())
+                {
+                    telnetQueueDataByte(
+                        0xFF
+                    );
+                }
+
+                telnetInputState =
+                    TELNET_DATA;
+
+                continue;
+            }
+
+            if (
+                ch == 0xFB ||
+                ch == 0xFC ||
+                ch == 0xFD ||
+                ch == 0xFE
+            )
+            {
+                telnetIacCommand = ch;
+
+                telnetInputState =
+                    TELNET_OPTION;
+
+                continue;
+            }
+
+            if (ch == 0xFA)
+            {
+                telnetInputState =
+                    TELNET_SUBNEGOTIATION;
+
+                continue;
+            }
+
+            telnetInputState =
+                TELNET_DATA;
+
+            continue;
+        }
+
+
+        if (
+            telnetInputState ==
+            TELNET_OPTION
+        )
+        {
+            /*
+             * Reject options we did not explicitly request.
+             */
+            if (
+                telnetIacCommand ==
+                    0xFD
+            )
+            {
+                telnetWriteNegotiation(
+                    0xFC,
+                    ch
+                );
+            }
+            else if (
+                telnetIacCommand ==
+                    0xFB
+            )
+            {
+                telnetWriteNegotiation(
+                    0xFE,
+                    ch
+                );
+            }
+
+            telnetInputState =
+                TELNET_DATA;
+
+            continue;
+        }
+
+
+        if (
+            telnetInputState ==
+            TELNET_SUBNEGOTIATION
+        )
+        {
+            if (ch == 0xFF)
+            {
+                telnetInputState =
+                    TELNET_SUBNEGOTIATION_IAC;
+            }
+
+            continue;
+        }
+
+
+        if (
+            telnetInputState ==
+            TELNET_SUBNEGOTIATION_IAC
+        )
+        {
+            if (ch == 0xF0)
+            {
+                telnetInputState =
+                    TELNET_DATA;
+            }
+            else if (ch != 0xFF)
+            {
+                telnetInputState =
+                    TELNET_SUBNEGOTIATION;
+            }
+
+            continue;
+        }
+    }
+}
+
+
+static void telnetWriteDataByte(
+    uint8_t ch
+)
+{
+    if (
+        !telnetClient ||
+        !telnetClient.connected()
+    )
+    {
+        return;
+    }
+
+    telnetClient.write(ch);
+
+    /*
+     * In Telnet data, literal IAC must be doubled.
+     */
+    if (ch == 0xFF)
+    {
+        telnetClient.write(ch);
+    }
+}
+
+
 static void pollInputs()
 {
     /*
@@ -1708,6 +2297,8 @@ static void pollInputs()
     pollCardputerKeyboard();
 
     pollUSBKeyboard();
+
+    pollTelnetKeyboard();
 
     terminalMaybeRefresh();
 }
@@ -1788,6 +2379,12 @@ void _putch(uint8 ch)
     {
         Serial.write(ch);
     }
+
+
+    if (telnetOutputEnabled())
+    {
+        telnetWriteDataByte(ch);
+    }
 }
 
 
@@ -1814,6 +2411,18 @@ void _clrscr(void)
     if (usbOutputEnabled())
     {
         Serial.print(
+            "\x1B[H\x1B[2J"
+        );
+    }
+
+
+    if (
+        telnetOutputEnabled() &&
+        telnetClient &&
+        telnetClient.connected()
+    )
+    {
+        telnetClient.print(
             "\x1B[H\x1B[2J"
         );
     }
@@ -2181,6 +2790,9 @@ static bool wifiConnectFromConfig()
             "WiFi: no WIFI.CFG - offline\r\n"
         );
 
+        telnetServerStarted =
+            false;
+
         WiFi.mode(
             WIFI_OFF
         );
@@ -2305,6 +2917,16 @@ static bool wifiConnectFromConfig()
                 true
             );
 
+
+            telnetServer.begin();
+
+            telnetServerStarted =
+                true;
+
+            _puts(
+                "Telnet: listening on port 23\r\n"
+            );
+
             return true;
         }
     }
@@ -2330,6 +2952,9 @@ static bool wifiConnectFromConfig()
         false,
         false
     );
+
+    telnetServerStarted =
+        false;
 
     WiFi.mode(
         WIFI_OFF
