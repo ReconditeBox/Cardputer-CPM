@@ -1,0 +1,19 @@
+# Cardputer CP/M WiFi configuration
+#
+# Copy this file to the ROOT of the SD card and rename it:
+#
+#   WIFI.CFG
+#
+# Networks are tried in numeric order.
+# PASSn may be left empty for an open network.
+#
+# Passwords are stored as plain text on the SD card.
+
+SSID1=Home Network
+PASS1=replace-with-password
+
+SSID2=Phone Hotspot
+PASS2=replace-with-password
+
+SSID3=Workshop
+PASS3=replace-with-password
