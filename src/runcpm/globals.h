@@ -282,7 +282,8 @@ static uint8 RAM[MEMSIZE];
 #endif
 
 /* Definition of global variables */
-static uint8 filename[17];      // Current filename in host filesystem format
+#define HOST_FILENAME_MAX 96
+static uint8 filename[HOST_FILENAME_MAX]; // Current filename in host filesystem format
 static uint8 setdefDriveCount = 2;
 static uint8 setdefDriveChain[SETDEF_MAX_DRIVES] =
 {
@@ -292,7 +293,7 @@ static uint8 setdefDriveChain[SETDEF_MAX_DRIVES] =
     0
 };
 
-static uint8 newname[17];       // New filename in host filesystem format
+static uint8 newname[HOST_FILENAME_MAX]; // New filename in host filesystem format
 static uint8 fcbname[13];       // Current filename in CP/M format
 static uint8 pattern[13];       // File matching pattern in CP/M format
 static uint16 dmaAddr = 0x0080; // Current dmaAddr
