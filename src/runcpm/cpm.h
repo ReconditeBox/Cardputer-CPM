@@ -141,13 +141,13 @@ enum eBDOSFunc {
 #define RST_18 0xdf  // RST 18h - Hardware calls
 #define NOP 0x00     // No operation
 
-/* set up full PUN and LST filenames to be on drive A: user 0 */
+/* set up full PUN and LST filenames to be on the system drive, user 0 */
 #ifdef USE_PUN
-char pun_file[17] = {'A', FOLDERCHAR, '0', FOLDERCHAR, 'P', 'U', 'N', '.', 'T', 'X', 'T', 0};
+char pun_file[17] = {SYSTEM_DRIVE_LETTER, FOLDERCHAR, '0', FOLDERCHAR, 'P', 'U', 'N', '.', 'T', 'X', 'T', 0};
 #endif // ifdef USE_PUN
 
 #ifdef USE_LST
-char lst_file[17] = {'A', FOLDERCHAR, '0', FOLDERCHAR, 'L', 'S', 'T', '.', 'T', 'X', 'T', 0};
+char lst_file[17] = {SYSTEM_DRIVE_LETTER, FOLDERCHAR, '0', FOLDERCHAR, 'L', 'S', 'T', '.', 'T', 'X', 'T', 0};
 #endif // ifdef USE_LST
 
 #ifdef PROFILE
@@ -190,8 +190,8 @@ void _PatchCPM(void) {
         /* IOBYTE - Points to Console */
         _RamWrite(IOByte, 0x3D);
 
-        /* Current drive/user - A:/0 */
-        _RamWrite(DSKByte, 0x00);
+        /* Current drive/user - system drive, user 0 */
+        _RamWrite(DSKByte, SYSTEM_DRIVE);
     }
     /* BDOS entry point (0x0005) */
     _RamWrite(0x0005, JP);
@@ -200,8 +200,8 @@ void _PatchCPM(void) {
     // **********  Patch CP/M Version into the memory so the CCP can see it
 #ifdef ABDOS
     // Loads the ABDOS.SYS file into memory or throws an error if it doesn't exist
-    if (_sys_exists((uint8 *)"A/0/ABDOS.SYS")) {
-        _RamLoad((uint8 *)"A/0/ABDOS.SYS", BDOSjmppage, 0);
+    if (_sys_exists((uint8 *)(SYSTEM_DRIVE_PATH "ABDOS.SYS"))) {
+        _RamLoad((uint8 *)(SYSTEM_DRIVE_PATH "ABDOS.SYS"), BDOSjmppage, 0);
     } else {
         _puts("\r\nABDOS.SYS not found");
         exit(1);
@@ -1222,7 +1222,7 @@ void _Bdos(void) {
         loginVector = 0;
         dmaAddr = 0x0080;
         multiRecordCount = 1; // CP/M 3 BDOS resets multi-sector count on system reset
-        cDrive = 0;           // userCode remains unchanged
+        cDrive = SYSTEM_DRIVE; // userCode remains unchanged
         HL = _CheckSUB();     // Checks if there's a $$$.SUB on the boot disk
         break;
     }
@@ -1239,8 +1239,12 @@ void _Bdos(void) {
             oDrive = cDrive;
         } else {
             if ((_RamRead(DSKByte) & 0x0f) == cDrive) {
-                cDrive = oDrive = 0;
-                _RamWrite(DSKByte, _RamRead(DSKByte) & 0xf0);
+                cDrive = oDrive = SYSTEM_DRIVE;
+                _RamWrite(
+                    DSKByte,
+                    (_RamRead(DSKByte) & 0xf0) |
+                    SYSTEM_DRIVE
+                );
             } else {
                 cDrive = oDrive;
             }
@@ -1564,7 +1568,7 @@ void _Bdos(void) {
     /*
        C = 47 (2Fh) : Chain to program (CPM3)
        E = Chain flag (0xFF = pass current drive/user to the chained program,
-           otherwise the chained program starts at drive A: user 0)
+           otherwise the chained program starts at the system drive, user 0)
        The command line to run is stored null-terminated in the default DMA
        buffer (0x0080). The call does not return to the caller: it warm boots
        and the CCP runs the chained command.
@@ -1582,8 +1586,8 @@ void _Bdos(void) {
         chainLoad = 1;
         if (LOW_REGISTER(DE) != 0xFF) { // do not inherit drive/user
             userCode = 0;
-            cDrive = oDrive = 0;
-            _RamWrite(DSKByte, 0x00);
+            cDrive = oDrive = SYSTEM_DRIVE;
+            _RamWrite(DSKByte, SYSTEM_DRIVE);
         }
         Status = STATUS_RESTART; // warm boot into the CCP
 #endif
