@@ -596,6 +596,13 @@ Cardputer-CPM also provides CP/M commands that initiate network connections from
 
 ### DNS
 
+Show the currently active DNS server:
+
+```text
+C0>DNS
+DNS server: 192.168.1.1
+```
+
 Resolve a host name to IPv4:
 
 ```text
@@ -606,6 +613,7 @@ example.com = 93.184.216.34
 Usage:
 
 ```text
+DNS
 DNS host
 ```
 
