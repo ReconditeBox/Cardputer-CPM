@@ -2002,8 +2002,32 @@ void _ccp(void) {
             _RamWrite(defDMA,
                       bufferLen); // Move the command line at this point to 0x0080
 
-            for (i = 0; i < bufferLen; ++i)
-                _RamWrite(defDMA + i + 1, toupper(_RamRead(cmdBufferPtr + i)));
+            /*
+             * Traditional CP/M command tails are uppercased by the CCP.
+             * WGET is the exception because URL paths and query strings may
+             * be case-sensitive. Preserve its tail exactly as typed while
+             * leaving the historic behaviour unchanged for every other
+             * external command.
+             */
+            bool preserveTailCase =
+                _RamRead(CmdFCB + 1) == 'W' &&
+                _RamRead(CmdFCB + 2) == 'G' &&
+                _RamRead(CmdFCB + 3) == 'E' &&
+                _RamRead(CmdFCB + 4) == 'T' &&
+                _RamRead(CmdFCB + 5) == ' ';
+
+            for (i = 0; i < bufferLen; ++i) {
+                uint8 tailCharacter =
+                    _RamRead(cmdBufferPtr + i);
+
+                _RamWrite(
+                    defDMA + i + 1,
+                    preserveTailCase
+                        ? tailCharacter
+                        : toupper(tailCharacter)
+                );
+            }
+
             while (i++ < 127) // "Zero" the rest of the DMA buffer
                 _RamWrite(defDMA + i, 0);
             _ccp_initFCB(ParFCB, 18); // Initializes the parameter FCB
