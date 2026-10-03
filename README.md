@@ -264,11 +264,66 @@ Entries are tried in numeric order. The first network that connects is used. Up 
 
 Blank lines and lines beginning with `#` or `;` are ignored. An empty `PASSn=` selects an open network.
 
+Addressing defaults to DHCP. A network can instead have persistent static addressing by adding `IPn`, `MASKn` and `GWn` for the same entry. `DNSn` is optional; if it is omitted for a static entry, the gateway is used as DNS.
+
+```text
+SSID1=Home Network
+PASS1=first-password
+IP1=192.168.1.50
+MASK1=255.255.255.0
+GW1=192.168.1.1
+DNS1=192.168.1.1
+```
+
 If `WIFI.CFG` is missing, contains no usable SSIDs, or none of the configured networks can be reached, the machine continues booting CP/M offline.
 
 Passwords are stored in plain text on the SD card. The firmware never prints passwords to the console.
 
 A template is included as `WIFI.CFG.EXAMPLE`. Copy it to the SD-card root, rename it to `WIFI.CFG`, and enter your own SSIDs and passwords.
+
+## IFCONFIG command
+
+`IFCONFIG.COM` displays the current WiFi configuration and can change the active `WIFI.CFG` entry between DHCP and a persistent static IPv4 address.
+
+Display the current connection:
+
+```text
+C0>IFCONFIG
+
+WiFi: connected
+SSID:  Home Network
+IP:    192.168.1.42
+Mask:  255.255.255.0
+GW:    192.168.1.1
+DNS:   192.168.1.1
+Mode:  DHCP
+```
+
+Switch the currently connected network back to DHCP:
+
+```text
+C0>IFCONFIG DHCP
+```
+
+Set a persistent static address:
+
+```text
+C0>IFCONFIG 192.168.1.50 255.255.255.0 192.168.1.1
+```
+
+Supply DNS explicitly as an optional fourth address:
+
+```text
+C0>IFCONFIG 192.168.1.50 255.255.255.0 192.168.1.1 8.8.8.8
+```
+
+Changes are written to the matching numbered entry in `/WIFI.CFG` and WiFi is reconnected immediately. If `DNSn` is omitted in static mode, the gateway is used as DNS.
+
+`IFCONFIG DHCP` removes the active entry's `IPn`, `MASKn`, `GWn` and `DNSn` lines, restoring normal DHCP on this and subsequent boots.
+
+Changing the IP address while Telnet owns `CON:` returns the console to LOCAL before WiFi is restarted. Reconnect the Telnet client to the new address and run `TELNETD` again if required.
+
+If WiFi is offline, bare `IFCONFIG` reports that state. Address changes require a currently connected network so the firmware knows which numbered `WIFI.CFG` entry to update.
 
 ## Telnet console
 
