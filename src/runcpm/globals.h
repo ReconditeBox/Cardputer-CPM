@@ -36,9 +36,10 @@
 #define SETDEF_MAX_DRIVES 4
 #define SETDEF_CURRENT_DRIVE 0xFF
 
-/* Definitions for enabling PUN: and LST: devices */
-#define USE_PUN // The pun.txt and lst.txt files will appear on the system drive, user 0
-#define USE_LST
+/* Definitions for enabling RDR:, PUN: and LST: devices */
+#define USE_RDR
+#define USE_PUN
+#define USE_LST // RDR.TXT, PUN.TXT and LST.TXT use system drive C:, user 0
 
 /* Definitions for file/console based debugging */
 // #define DEBUG			// Enables the internal debugger (enabled by default on visual studio debug builds)
