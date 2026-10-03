@@ -2357,6 +2357,28 @@ void _Bdos(void) {
     }
 #endif
 
+#if defined board_cardputer_ftpclient
+    /*
+       C = 245 (F5h) : Cardputer outbound FTP client
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 245: {
+        HL = cardputerFtpClientBdos(DE);
+        break;
+    }
+#endif
+
+#if defined board_cardputer_browser
+    /*
+       C = 246 (F6h) : Cardputer text browser
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 246: {
+        HL = cardputerBrowserBdos(DE);
+        break;
+    }
+#endif
+
     /*
        C = 248 (F8h) : Milliseconds Uptime
        Returns the number of milliseconds (since the board started).
