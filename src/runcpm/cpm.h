@@ -153,6 +153,20 @@ char rdr_file[17] = {SYSTEM_DRIVE_LETTER, FOLDERCHAR, '0', FOLDERCHAR, 'R', 'D',
  * but is retried on a later access so it may be supplied after boot.
  */
 static uint8 _ReaderRead() {
+#if defined board_cardputer_aux
+    /*
+     * CP/M 2.2 IOBYTE bits 2-3 select the reader device.
+     * 00 = TTY:.  On Cardputer-CPM, TTY: is the EXT UART.
+     * The other selections retain the file-backed RDR.TXT device.
+     */
+    if (
+        ((_RamRead(IOByte) >> 2) & 0x03) ==
+        0x00
+    ) {
+        return cardputerAuxRead();
+    }
+#endif
+
     if (rdr_eof) {
         return 0x1A;
     }
@@ -200,6 +214,21 @@ char pun_file[17] = {SYSTEM_DRIVE_LETTER, FOLDERCHAR, '0', FOLDERCHAR, 'P', 'U',
  * immediately durable even when the data contains no line endings.
  */
 static void _PunchWrite(uint8 ch) {
+#if defined board_cardputer_aux
+    /*
+     * CP/M 2.2 IOBYTE bits 4-5 select the punch device.
+     * 00 = TTY:.  On Cardputer-CPM, TTY: is the EXT UART.
+     * The other selections retain the file-backed PUN.TXT device.
+     */
+    if (
+        ((_RamRead(IOByte) >> 4) & 0x03) ==
+        0x00
+    ) {
+        cardputerAuxWrite(ch);
+        return;
+    }
+#endif
+
     if (!pun_open) {
         pun_dev = _sys_fopen_w(
             (uint8 *)pun_file
@@ -749,11 +778,25 @@ void _Bios(void) {
         break;
     }
     case B_AUXIST: { // 18 - Return status of current auxiliary input device
+    #if defined board_cardputer_aux
+        SET_HIGH_REGISTER(
+            AF,
+            cardputerAuxInputReady()
+        );
+    #else
         SET_HIGH_REGISTER(AF, 0x00);
+    #endif
         break;
     }
     case B_AUXOST: { // 19 - Return status of current auxiliary output device
+    #if defined board_cardputer_aux
+        SET_HIGH_REGISTER(
+            AF,
+            cardputerAuxOutputReady()
+        );
+    #else
         SET_HIGH_REGISTER(AF, 0x00);
+    #endif
         break;
     }
     case B_DEVTBL: { // 20 - Return the address of the devices table, or 0 if not implemented
@@ -2234,6 +2277,16 @@ void _Bdos(void) {
      */
     case 237: {
         HL = cardputerFtpdBdos();
+        break;
+    }
+#endif
+
+#if defined board_cardputer_battery
+    /*
+       C = 238 (EEh) : Cardputer BATTERY command
+     */
+    case 238: {
+        HL = cardputerBatteryBdos();
         break;
     }
 #endif
