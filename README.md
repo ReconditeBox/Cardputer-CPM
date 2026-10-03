@@ -327,6 +327,56 @@ Because the Telnet listener exists only in TELNETD mode, a connected Telnet clie
 
 If WiFi is offline, bare `IFCONFIG` reports that state. Address changes require a currently connected network so the firmware knows which numbered `WIFI.CFG` entry to update.
 
+## FTPD command
+
+`FTPD.COM` starts an anonymous FTP server on TCP port 21. The FTP listener exists only while FTPD is active.
+
+Run:
+
+```text
+C0>FTPD
+```
+
+The server remains in the background while the Cardputer stays on its normal CP/M console. The physical **Fn + =** key combination stops FTPD completely, closes any active FTP client and data connection, and removes the listener.
+
+FTPD accepts one control client at a time. When a client connects or disconnects, the event is reported on the CP/M console together with the remote IPv4 address:
+
+```text
+[FTP client connected from 192.168.1.23]
+[FTP client disconnected from 192.168.1.23]
+```
+
+When a client logs out or drops its connection, FTPD itself remains active and returns to listening for the next client. Only **Fn + =** stops the FTP service.
+
+Authentication is anonymous. `USER` is accepted and the supplied `PASS` value is ignored.
+
+### FTP filesystem view
+
+FTPD can access **only CP/M drive F:**. No other CP/M drive and no arbitrary SD-card path is exposed.
+
+There is no FTP directory hierarchy. Instead, `CWD` selects the CP/M user area:
+
+```text
+CWD 0
+CWD 1
+...
+CWD 15
+```
+
+`PWD` reports the current user area as `/0` through `/15`. The session always starts in F: user 0.
+
+Internally these user areas use RunCPM's normal F: backing folders (`F/0` through `F/9`, then `F/A` through `F/F`), but those folders are not exposed as ordinary FTP directories.
+
+`MKD`, `RMD`, `CDUP`, path traversal, embedded drive names and access outside the selected F: user area are rejected.
+
+Uploaded, downloaded, renamed and deleted files are restricted to CP/M-compatible 8.3 filenames. Upload names are canonicalised to uppercase.
+
+Supported data operations include passive-mode `LIST`, `NLST`, `MLSD`, `RETR`, `STOR`, `APPE`, `DELE`, `RNFR`/`RNTO` and `SIZE`. FTP active mode (`PORT`/`EPRT`) is not supported; clients must use `PASV` or `EPSV`.
+
+FTPD and TELNETD are mutually exclusive. `TELNETD` cannot be started while FTPD is active, and FTPD cannot be started while TELNETD is active.
+
+A bare `IFCONFIG` may still display the current network status while FTPD is active, but DHCP/static address changes are refused until FTPD is stopped.
+
 ## MEM command
 
 `MEM.COM` reports the Cardputer's live runtime memory usage from CP/M.
