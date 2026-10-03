@@ -28,6 +28,8 @@ Current functionality includes:
 - outbound DNS lookup with `DNS`
 - ICMP echo testing with `PING`
 - outbound Telnet client with `TELNET`
+- interactive outbound passive-mode FTP client with `FTP`
+- Lynx-style text web browser with `BROWSE`
 - HTTP/HTTPS file download with `WGET`
 - NTP UTC clock synchronisation with `NTP`
 - current UTC date/time display with `TIME`
@@ -116,6 +118,8 @@ USB.COM
 BOTH.COM
 TELNETD.COM
 TELNET.COM
+FTP.COM
+BROWSE.COM
 DNS.COM
 PING.COM
 WGET.COM
@@ -683,6 +687,81 @@ Ctrl-]
 or physical **Fn + =**.
 
 Outbound `TELNET` may run while `TELNETD` is active, including from an inbound Telnet console session. It remains unavailable while `FTPD` is active.
+
+### FTP
+
+Connect to a remote FTP server:
+
+```text
+C0>FTP ftp.example.com
+```
+
+Port 21 is the default. A different control port may be supplied:
+
+```text
+C0>FTP ftp.example.com 2121
+```
+
+The client attempts anonymous login first and then enters an interactive prompt. Transfers default to binary mode.
+
+Common commands:
+
+```text
+ftp> ls
+ftp> pwd
+ftp> cd pub
+ftp> get PROGRAM.COM
+ftp> get archive.bin F:ARCHIVE.BIN
+ftp> put README.TXT
+ftp> put F:PROGRAM.COM PROGRAM.COM
+ftp> user accountname
+ftp> pass
+ftp> binary
+ftp> ascii
+ftp> quote SYST
+ftp> quit
+```
+
+`PASS` prompts for the password without echoing it.
+
+The outbound client uses **passive FTP only**. `GET` downloads through a temporary file and installs it only after the transfer completes, and existing CP/M read-only destinations are protected. Local filenames remain CP/M 8.3 names in the current user area, with an optional drive prefix.
+
+Outbound `FTP` may run while TELNETD is active. It is unavailable while the local FTPD server is active.
+
+### BROWSE
+
+`BROWSE.COM` is a deliberately small text-mode web browser inspired by Lynx:
+
+```text
+C0>BROWSE https://example.com/
+```
+
+With no URL, it prompts for one:
+
+```text
+C0>BROWSE
+URL:
+```
+
+HTML is rendered as wrapped text. Links are shown inline with numbers such as `[1]`, `[2]` and so on.
+
+At the browser prompt:
+
+```text
+browse> 3              follow link 3
+browse> B              back
+browse> G https://...  go to URL
+browse> R              reload
+browse> L              list links and full URLs
+browse> H              help
+browse> Q              quit
+```
+
+Relative HTTP/HTTPS links are resolved against the current page. Up to 64 links are retained per page and eight pages of back history are kept.
+
+The browser handles ordinary server-rendered HTML and plain text. It strips tags, ignores CSS and JavaScript, and does **not** execute client-side applications. Modern sites that require JavaScript will therefore be incomplete or unusable, as expected for a simple CP/M text browser.
+
+HTTP and HTTPS are supported. As with WGET, HTTPS traffic is encrypted but certificate identity is not yet validated because the firmware does not currently carry a CA bundle.
 
 ### WGET
 
