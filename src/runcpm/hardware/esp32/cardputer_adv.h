@@ -28,6 +28,9 @@ SdFat SD;
 #define board_cardputer_ftpd
 #define board_cardputer_aux
 #define board_cardputer_battery
+#define board_cardputer_dns
+#define board_cardputer_ping
+#define board_cardputer_telnet
 #define board_cardputer_removable_media
 
 /*
@@ -118,6 +121,9 @@ uint16 cardputerTelnetdBdos(uint16 commandTail);
 uint16 cardputerMemBdos();
 uint16 cardputerFtpdBdos();
 uint16 cardputerBatteryBdos();
+uint16 cardputerDnsBdos(uint16 commandTail);
+uint16 cardputerPingBdos(uint16 commandTail);
+uint16 cardputerTelnetBdos(uint16 commandTail);
 
 uint8 cardputerAuxRead();
 void cardputerAuxWrite(uint8 value);
