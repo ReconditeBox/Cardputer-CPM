@@ -1221,6 +1221,16 @@ static void ftpSendDirectoryListing(
         uint32_t size =
             entry.size();
 
+        int fatAttributes =
+            entry.attrib();
+
+        bool readOnly =
+            fatAttributes >= 0 &&
+            (
+                fatAttributes &
+                FS_ATTRIB_READ_ONLY
+            );
+
         entry.close();
 
         char line[160];
@@ -1239,8 +1249,11 @@ static void ftpSendDirectoryListing(
             snprintf(
                 line,
                 sizeof(line),
-                "type=file;size=%lu; %s\r\n",
+                "type=file;size=%lu;perm=%s; %s\r\n",
                 (unsigned long)size,
+                readOnly
+                    ? "r"
+                    : "adfrw",
                 canonical
             );
         }
@@ -1249,7 +1262,10 @@ static void ftpSendDirectoryListing(
             snprintf(
                 line,
                 sizeof(line),
-                "-rw-rw-rw- 1 ftp ftp %10lu Jan 01  1980 %s\r\n",
+                "%s 1 ftp ftp %10lu Jan 01  1980 %s\r\n",
+                readOnly
+                    ? "-r--r--r--"
+                    : "-rw-rw-rw-",
                 (unsigned long)size,
                 canonical
             );
@@ -1493,6 +1509,21 @@ static void ftpHandleStore(
         return;
     }
 
+    if (
+        SD.exists(path) &&
+        _sys_isreadonly(
+            (uint8 *)path
+        )
+    )
+    {
+        ftpReply(
+            550,
+            "CP/M file is read-only."
+        );
+
+        return;
+    }
+
     if (!ftpPassiveServer)
     {
         ftpReply(
@@ -1729,7 +1760,25 @@ static void ftpHandleDelete(
         return;
     }
 
-    if (SD.remove(path))
+    if (
+        _sys_isreadonly(
+            (uint8 *)path
+        )
+    )
+    {
+        ftpReply(
+            550,
+            "CP/M file is read-only."
+        );
+
+        return;
+    }
+
+    if (
+        _sys_deletefile(
+            (uint8 *)path
+        )
+    )
     {
         ftpReply(
             250,
@@ -1867,6 +1916,23 @@ static void ftpHandleRenameFrom(
 
     file.close();
 
+    if (
+        _sys_isreadonly(
+            (uint8 *)ftpRenameFrom
+        )
+    )
+    {
+        ftpRenamePending =
+            false;
+
+        ftpReply(
+            550,
+            "CP/M file is read-only."
+        );
+
+        return;
+    }
+
     ftpRenamePending =
         true;
 
@@ -1920,7 +1986,7 @@ static void ftpHandleRenameTo(
     File file =
         SD.open(
             ftpRenameFrom,
-            O_WRITE | O_APPEND
+            O_READ
         );
 
     bool success =
