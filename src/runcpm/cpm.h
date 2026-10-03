@@ -2103,6 +2103,16 @@ void _Bdos(void) {
     }
 #endif
 
+#if defined board_cardputer_mem
+    /*
+       C = 236 (ECh) : Cardputer MEM command
+     */
+    case 236: {
+        HL = cardputerMemBdos();
+        break;
+    }
+#endif
+
     /*
        C = 248 (F8h) : Milliseconds Uptime
        Returns the number of milliseconds (since the board started).
