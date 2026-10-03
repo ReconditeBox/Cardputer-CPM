@@ -230,6 +230,17 @@ bool _sys_exists(uint8 *filename) {
     return (SD.exists((const char *)filename));
 }
 
+File _sys_fopen_r(uint8 *filename) {
+    return (SD.open(
+        (char *)filename,
+        O_READ
+    ));
+}
+
+int _sys_fgetc(File &f) {
+    return (f.read());
+}
+
 File _sys_fopen_w(uint8 *filename) {
     /*
      * Host equivalent of fopen(..., "w"): create a new output file or
