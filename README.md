@@ -337,7 +337,7 @@ Run:
 C0>FTPD
 ```
 
-The server remains in the background while the Cardputer stays on its normal CP/M console. The physical **Fn + =** key combination stops FTPD completely, closes any active FTP client and data connection, and removes the listener.
+FTPD is a foreground service mode. Running `FTPD` leaves the normal CP/M prompt and shows a dedicated FTP status screen on the Cardputer, in the same style as TELNETD. CP/M does not return to its normal prompt while FTPD is active. The physical **Fn + =** key combination stops FTPD completely, closes any active FTP client and data connection, removes the listener, and returns to the LOCAL CP/M console.
 
 FTPD accepts one control client at a time. When a client connects or disconnects, the event is reported on the CP/M console together with the remote IPv4 address:
 
@@ -346,7 +346,7 @@ FTPD accepts one control client at a time. When a client connects or disconnects
 [FTP client disconnected from 192.168.1.23]
 ```
 
-When a client logs out or drops its connection, FTPD itself remains active and returns to listening for the next client. Only **Fn + =** stops the FTP service.
+When a client logs out or drops its connection, FTPD itself remains in its foreground FTP mode and returns to listening for the next client. Only physical **Fn + =** stops the FTP service and returns to the CP/M prompt.
 
 Authentication is anonymous. `USER` is accepted and the supplied `PASS` value is ignored.
 
