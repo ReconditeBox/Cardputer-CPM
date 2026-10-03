@@ -1193,10 +1193,25 @@ uint8 _ccp_date(void) {
 
 #endif // Internals
 
+#if defined board_cardputer_battery
+uint8 _ccp_battery(void) {
+    return (
+        uint8
+    )_ccp_bdos(
+        238,
+        0
+    );
+}
+#endif
+
+
 // ?/Help command
 uint8 _ccp_hlp(void) {
     _puts("\r\nCCP Commands:\r\n");
     _puts(" ?                  - Shows this list of commands\r\n");
+#if defined board_cardputer_battery
+    _puts(" BATTERY            - Shows battery level and voltage\r\n");
+#endif
     _puts(" CLS                - Clears the screen\r\n");
     _puts(" COPY <src> <dst>   - Copies a file\r\n");
 #ifdef CPM3
@@ -1235,6 +1250,9 @@ static const Command Commands[] = {
     {"USER", _ccp_user},
 
     // Extra CCP commands
+#if defined board_cardputer_battery
+    {"BATTERY", _ccp_battery},
+#endif
     {"CLS", _ccp_cls},
     {"COPY", _ccp_copy},
     {"LDIR", _ccp_ldir},
