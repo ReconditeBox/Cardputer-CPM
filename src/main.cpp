@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <M5Cardputer.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <time.h>
 #include <string.h>
 #include "ping/ping_sock.h"
 #include "lwip/ip_addr.h"
@@ -7566,6 +7569,1392 @@ uint16 cardputerTelnetBdos(
 }
 
 
+
+/*
+ * ====================================================
+ * WGET / NTP / TIME
+ *
+ * WGET.COM : HTTP/HTTPS downloader into CP/M storage.
+ * NTP.COM  : synchronise the ESP32 system clock using NTP.
+ * TIME.COM : display the current UTC date/time without resyncing.
+ * ====================================================
+ */
+
+#define WGET_BUFFER_SIZE 1024
+#define WGET_PATH_SIZE   128
+#define WGET_NAME_SIZE   13
+#define NTP_DEFAULT_SERVER "pool.ntp.org"
+
+static char cardputerNtpServer[64] =
+    NTP_DEFAULT_SERVER;
+
+
+static bool cardputerClockValid()
+{
+    time_t now =
+        time(NULL);
+
+    /*
+     * Treat anything before 2024-01-01 as unsynchronised. ESP32 starts
+     * with an epoch-like clock until SNTP or another source sets it.
+     */
+    return now >=
+        (time_t)1704067200;
+}
+
+
+static bool cardputerFormatUtc(
+    char *buffer,
+    size_t bufferSize
+)
+{
+    if (
+        !buffer ||
+        bufferSize == 0 ||
+        !cardputerClockValid()
+    )
+    {
+        return false;
+    }
+
+    time_t now =
+        time(NULL);
+
+    struct tm utc;
+
+    if (!gmtime_r(
+        &now,
+        &utc
+    ))
+    {
+        return false;
+    }
+
+    return strftime(
+        buffer,
+        bufferSize,
+        "%Y-%m-%d %H:%M:%S UTC",
+        &utc
+    ) > 0;
+}
+
+
+static void cardputerConfigureNtp(
+    const char *server
+)
+{
+    if (
+        !server ||
+        !server[0]
+    )
+    {
+        server =
+            NTP_DEFAULT_SERVER;
+    }
+
+    strncpy(
+        cardputerNtpServer,
+        server,
+        sizeof(cardputerNtpServer) - 1
+    );
+
+    cardputerNtpServer[
+        sizeof(cardputerNtpServer) - 1
+    ] = 0;
+
+    /*
+     * Keep the host clock in UTC. Local timezone policy can be layered on
+     * later without changing the underlying absolute time.
+     */
+    configTime(
+        0,
+        0,
+        cardputerNtpServer
+    );
+}
+
+
+static void cardputerPrintUtc()
+{
+    char timeText[48];
+
+    if (!cardputerFormatUtc(
+        timeText,
+        sizeof(timeText)
+    ))
+    {
+        _puts(
+            "Time: not synchronised\r\n"
+        );
+
+        return;
+    }
+
+    char message[96];
+
+    snprintf(
+        message,
+        sizeof(message),
+        "Time: %s\r\n",
+        timeText
+    );
+
+    _puts(
+        message
+    );
+}
+
+
+uint16 cardputerTimeBdos()
+{
+    _puts(
+        "\r\n"
+    );
+
+    if (!cardputerClockValid())
+    {
+        _puts(
+            "TIME: clock is not synchronised\r\n"
+            "Run NTP first.\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    cardputerPrintUtc();
+
+    return 0;
+}
+
+
+uint16 cardputerNtpBdos(
+    uint16 commandTail
+)
+{
+    if (
+        WiFi.status() !=
+        WL_CONNECTED
+    )
+    {
+        _puts(
+            "\r\nNTP: WiFi is offline\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    char buffer[129];
+
+    if (!networkReadCommandTail(
+        commandTail,
+        buffer,
+        sizeof(buffer)
+    ))
+    {
+        return 0x00FF;
+    }
+
+    char *text =
+        wifiTrim(
+            buffer
+        );
+
+    char *arguments[2];
+
+    int argumentCount =
+        wifiTokenize(
+            text,
+            arguments,
+            2
+        );
+
+    if (argumentCount > 1)
+    {
+        _puts(
+            "\r\n"
+            "Usage: NTP [server]\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    const char *server =
+        argumentCount == 1
+            ? arguments[0]
+            : NTP_DEFAULT_SERVER;
+
+    cardputerConfigureNtp(
+        server
+    );
+
+    char message[128];
+
+    snprintf(
+        message,
+        sizeof(message),
+        "\r\nNTP: synchronising with %s...\r\n",
+        cardputerNtpServer
+    );
+
+    _puts(
+        message
+    );
+
+    struct tm utc;
+
+    if (!getLocalTime(
+        &utc,
+        10000
+    ))
+    {
+        _puts(
+            "NTP: synchronisation failed\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    snprintf(
+        message,
+        sizeof(message),
+        "NTP server: %s\r\n",
+        cardputerNtpServer
+    );
+
+    _puts(
+        message
+    );
+
+    cardputerPrintUtc();
+
+    return 0;
+}
+
+
+static bool wgetValidFilenameCharacter(
+    char ch
+)
+{
+    if (
+        ch >= 'A' &&
+        ch <= 'Z'
+    )
+    {
+        return true;
+    }
+
+    if (
+        ch >= '0' &&
+        ch <= '9'
+    )
+    {
+        return true;
+    }
+
+    const char *extra =
+        "$#@!%&'()-^_{}~+";
+
+    return strchr(
+        extra,
+        ch
+    ) != NULL;
+}
+
+
+static bool wgetCanonicalFilename(
+    const char *input,
+    char *output,
+    size_t outputSize
+)
+{
+    if (
+        !input ||
+        !input[0] ||
+        !output ||
+        outputSize <
+            WGET_NAME_SIZE
+    )
+    {
+        return false;
+    }
+
+    char upper[
+        WGET_NAME_SIZE
+    ];
+
+    size_t length =
+        strlen(
+            input
+        );
+
+    if (
+        length == 0 ||
+        length >=
+            sizeof(upper)
+    )
+    {
+        return false;
+    }
+
+    for (
+        size_t index = 0;
+        index < length;
+        index++
+    )
+    {
+        char ch =
+            input[index];
+
+        if (
+            ch >= 'a' &&
+            ch <= 'z'
+        )
+        {
+            ch =
+                (char)(
+                    ch - 'a' + 'A'
+                );
+        }
+
+        upper[index] =
+            ch;
+    }
+
+    upper[length] =
+        0;
+
+    char *dot =
+        strchr(
+            upper,
+            '.'
+        );
+
+    size_t baseLength =
+        dot
+            ? (size_t)(
+                dot - upper
+              )
+            : length;
+
+    size_t extensionLength =
+        dot
+            ? strlen(
+                dot + 1
+              )
+            : 0;
+
+    if (
+        baseLength < 1 ||
+        baseLength > 8 ||
+        extensionLength > 3 ||
+        (
+            dot &&
+            (
+                extensionLength == 0 ||
+                strchr(
+                    dot + 1,
+                    '.'
+                )
+            )
+        )
+    )
+    {
+        return false;
+    }
+
+    for (
+        size_t index = 0;
+        index < length;
+        index++
+    )
+    {
+        if (
+            upper[index] ==
+            '.'
+        )
+        {
+            continue;
+        }
+
+        if (!wgetValidFilenameCharacter(
+            upper[index]
+        ))
+        {
+            return false;
+        }
+    }
+
+    if (
+        strcmp(
+            upper,
+            "WGETTMP.$$"
+        ) == 0 ||
+        strcmp(
+            upper,
+            "WGETBAK.$$"
+        ) == 0
+    )
+    {
+        return false;
+    }
+
+    strcpy(
+        output,
+        upper
+    );
+
+    return true;
+}
+
+
+static bool wgetFilenameFromUrl(
+    const char *url,
+    char *filename,
+    size_t filenameSize
+)
+{
+    if (
+        !url ||
+        !filename
+    )
+    {
+        return false;
+    }
+
+    const char *scheme =
+        strstr(
+            url,
+            "://"
+        );
+
+    if (!scheme)
+    {
+        return false;
+    }
+
+    const char *path =
+        strchr(
+            scheme + 3,
+            '/'
+        );
+
+    if (!path)
+    {
+        return wgetCanonicalFilename(
+            "INDEX.HTM",
+            filename,
+            filenameSize
+        );
+    }
+
+    const char *lastSlash =
+        strrchr(
+            path,
+            '/'
+        );
+
+    const char *name =
+        lastSlash
+            ? lastSlash + 1
+            : path;
+
+    size_t length =
+        strcspn(
+            name,
+            "?#"
+        );
+
+    if (length == 0)
+    {
+        return wgetCanonicalFilename(
+            "INDEX.HTM",
+            filename,
+            filenameSize
+        );
+    }
+
+    if (
+        length >=
+        WGET_NAME_SIZE
+    )
+    {
+        return false;
+    }
+
+    char candidate[
+        WGET_NAME_SIZE
+    ];
+
+    memcpy(
+        candidate,
+        name,
+        length
+    );
+
+    candidate[length] =
+        0;
+
+    return wgetCanonicalFilename(
+        candidate,
+        filename,
+        filenameSize
+    );
+}
+
+
+static bool wgetParseDestination(
+    const char *argument,
+    uint8_t &drive,
+    char *filename,
+    size_t filenameSize
+)
+{
+    drive =
+        cDrive;
+
+    if (
+        !argument ||
+        !argument[0]
+    )
+    {
+        return false;
+    }
+
+    const char *name =
+        argument;
+
+    if (
+        argument[0] &&
+        argument[1] ==
+            ':'
+    )
+    {
+        char driveLetter =
+            argument[0];
+
+        if (
+            driveLetter >= 'a' &&
+            driveLetter <= 'p'
+        )
+        {
+            driveLetter =
+                (char)(
+                    driveLetter - 'a' + 'A'
+                );
+        }
+
+        if (
+            driveLetter < 'A' ||
+            driveLetter > 'P'
+        )
+        {
+            return false;
+        }
+
+        drive =
+            (uint8_t)(
+                driveLetter - 'A'
+            );
+
+        name =
+            argument + 2;
+    }
+
+    if (
+        strchr(
+            name,
+            ':'
+        ) ||
+        strchr(
+            name,
+            '/'
+        ) ||
+        strchr(
+            name,
+            '\\'
+        )
+    )
+    {
+        return false;
+    }
+
+    return wgetCanonicalFilename(
+        name,
+        filename,
+        filenameSize
+    );
+}
+
+
+static bool wgetBuildUserPath(
+    uint8_t drive,
+    char *userPath,
+    size_t userPathSize
+)
+{
+    uint8_t root[
+        HOST_FILENAME_MAX
+    ];
+
+    if (!_sysBuildDriveRoot(
+        drive,
+        root,
+        sizeof(root)
+    ))
+    {
+        return false;
+    }
+
+    File rootDirectory =
+        SD.open(
+            (char *)root,
+            O_READ
+        );
+
+    if (
+        !rootDirectory ||
+        !rootDirectory.isDirectory()
+    )
+    {
+        if (rootDirectory)
+        {
+            rootDirectory.close();
+        }
+
+        return false;
+    }
+
+    rootDirectory.close();
+
+    char userFolder =
+        (char)toupper(
+            tohex(
+                userCode
+            )
+        );
+
+    int written =
+        snprintf(
+            userPath,
+            userPathSize,
+            "%s/%c",
+            (char *)root,
+            userFolder
+        );
+
+    if (
+        written <= 0 ||
+        (size_t)written >=
+            userPathSize
+    )
+    {
+        return false;
+    }
+
+    File existing =
+        SD.open(
+            userPath,
+            O_READ
+        );
+
+    if (existing)
+    {
+        bool okay =
+            existing.isDirectory();
+
+        existing.close();
+
+        return okay;
+    }
+
+    return SD.mkdir(
+        userPath
+    );
+}
+
+
+static bool wgetBuildPaths(
+    uint8_t drive,
+    const char *filename,
+    char *destination,
+    size_t destinationSize,
+    char *temporary,
+    size_t temporarySize,
+    char *backup,
+    size_t backupSize
+)
+{
+    char userPath[
+        WGET_PATH_SIZE
+    ];
+
+    if (!wgetBuildUserPath(
+        drive,
+        userPath,
+        sizeof(userPath)
+    ))
+    {
+        return false;
+    }
+
+    int written =
+        snprintf(
+            destination,
+            destinationSize,
+            "%s/%s",
+            userPath,
+            filename
+        );
+
+    if (
+        written <= 0 ||
+        (size_t)written >=
+            destinationSize
+    )
+    {
+        return false;
+    }
+
+    written =
+        snprintf(
+            temporary,
+            temporarySize,
+            "%s/WGETTMP.$$",
+            userPath
+        );
+
+    if (
+        written <= 0 ||
+        (size_t)written >=
+            temporarySize
+    )
+    {
+        return false;
+    }
+
+    written =
+        snprintf(
+            backup,
+            backupSize,
+            "%s/WGETBAK.$$",
+            userPath
+        );
+
+    return (
+        written > 0 &&
+        (size_t)written <
+            backupSize
+    );
+}
+
+
+static bool wgetCommitTemporaryFile(
+    const char *temporary,
+    const char *destination,
+    const char *backup
+)
+{
+    SD.remove(
+        backup
+    );
+
+    bool hadDestination =
+        SD.exists(
+            destination
+        );
+
+    if (hadDestination)
+    {
+        File oldFile =
+            SD.open(
+                destination,
+                O_READ
+            );
+
+        if (
+            !oldFile ||
+            !oldFile.rename(
+                backup
+            )
+        )
+        {
+            if (oldFile)
+            {
+                oldFile.close();
+            }
+
+            return false;
+        }
+
+        oldFile.close();
+    }
+
+    File downloaded =
+        SD.open(
+            temporary,
+            O_READ
+        );
+
+    if (
+        !downloaded ||
+        !downloaded.rename(
+            destination
+        )
+    )
+    {
+        if (downloaded)
+        {
+            downloaded.close();
+        }
+
+        if (hadDestination)
+        {
+            File backupFile =
+                SD.open(
+                    backup,
+                    O_READ
+                );
+
+            if (backupFile)
+            {
+                backupFile.rename(
+                    destination
+                );
+
+                backupFile.close();
+            }
+        }
+
+        return false;
+    }
+
+    downloaded.close();
+
+    if (hadDestination)
+    {
+        SD.remove(
+            backup
+        );
+    }
+
+    return true;
+}
+
+
+uint16 cardputerWgetBdos(
+    uint16 commandTail
+)
+{
+    if (
+        WiFi.status() !=
+        WL_CONNECTED
+    )
+    {
+        _puts(
+            "\r\nWGET: WiFi is offline\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    if (ftpIsActive())
+    {
+        _puts(
+            "\r\nWGET: unavailable while FTPD is active\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    char buffer[129];
+
+    if (!networkReadCommandTail(
+        commandTail,
+        buffer,
+        sizeof(buffer)
+    ))
+    {
+        return 0x00FF;
+    }
+
+    char *text =
+        wifiTrim(
+            buffer
+        );
+
+    char *arguments[3];
+
+    int argumentCount =
+        wifiTokenize(
+            text,
+            arguments,
+            3
+        );
+
+    if (
+        argumentCount < 1 ||
+        argumentCount > 2
+    )
+    {
+        _puts(
+            "\r\n"
+            "Usage: WGET url [[drive:]file]\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    const char *url =
+        arguments[0];
+
+    bool isHttp =
+        strncasecmp(
+            url,
+            "http://",
+            7
+        ) == 0;
+
+    bool isHttps =
+        strncasecmp(
+            url,
+            "https://",
+            8
+        ) == 0;
+
+    if (
+        !isHttp &&
+        !isHttps
+    )
+    {
+        _puts(
+            "\r\nWGET: URL must begin with http:// or https://\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    uint8_t drive =
+        cDrive;
+
+    char filename[
+        WGET_NAME_SIZE
+    ];
+
+    if (argumentCount == 2)
+    {
+        if (!wgetParseDestination(
+            arguments[1],
+            drive,
+            filename,
+            sizeof(filename)
+        ))
+        {
+            _puts(
+                "\r\nWGET: invalid CP/M 8.3 destination\r\n"
+            );
+
+            return 0x00FF;
+        }
+    }
+    else
+    {
+        if (!wgetFilenameFromUrl(
+            url,
+            filename,
+            sizeof(filename)
+        ))
+        {
+            _puts(
+                "\r\n"
+                "WGET: URL filename is not CP/M 8.3\r\n"
+                "Specify a destination: WGET url [drive:]file\r\n"
+            );
+
+            return 0x00FF;
+        }
+    }
+
+    char destination[
+        WGET_PATH_SIZE
+    ];
+
+    char temporary[
+        WGET_PATH_SIZE
+    ];
+
+    char backup[
+        WGET_PATH_SIZE
+    ];
+
+    if (!wgetBuildPaths(
+        drive,
+        filename,
+        destination,
+        sizeof(destination),
+        temporary,
+        sizeof(temporary),
+        backup,
+        sizeof(backup)
+    ))
+    {
+        _puts(
+            "\r\nWGET: destination drive/user is unavailable\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    if (
+        SD.exists(
+            destination
+        ) &&
+        _sys_isreadonly(
+            (uint8 *)destination
+        )
+    )
+    {
+        _puts(
+            "\r\nWGET: destination is read-only\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    SD.remove(
+        temporary
+    );
+
+    File output =
+        SD.open(
+            temporary,
+            O_CREAT |
+            O_WRITE |
+            O_TRUNC
+        );
+
+    if (!output)
+    {
+        _puts(
+            "\r\nWGET: cannot create temporary file\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    HTTPClient http;
+
+    WiFiClient plainClient;
+    WiFiClientSecure secureClient;
+
+    if (isHttps)
+    {
+        /*
+         * HTTPS is encrypted, but this first Cardputer implementation does
+         * not carry a CA bundle. Do not pretend certificate identity is
+         * verified: setInsecure() is explicit and documented.
+         */
+        secureClient.setInsecure();
+
+        if (!http.begin(
+            secureClient,
+            url
+        ))
+        {
+            output.close();
+            SD.remove(
+                temporary
+            );
+
+            _puts(
+                "\r\nWGET: unable to initialise HTTPS\r\n"
+            );
+
+            return 0x00FF;
+        }
+    }
+    else
+    {
+        if (!http.begin(
+            plainClient,
+            url
+        ))
+        {
+            output.close();
+            SD.remove(
+                temporary
+            );
+
+            _puts(
+                "\r\nWGET: unable to initialise HTTP\r\n"
+            );
+
+            return 0x00FF;
+        }
+    }
+
+    /*
+     * HTTP/1.0 avoids chunked transfer framing in the raw body stream,
+     * which lets us stream large downloads directly to SdFat without
+     * buffering the whole response in RAM.
+     */
+    http.useHTTP10(
+        true
+    );
+
+    http.setReuse(
+        false
+    );
+
+    http.setTimeout(
+        15000
+    );
+
+    http.setFollowRedirects(
+        HTTPC_STRICT_FOLLOW_REDIRECTS
+    );
+
+    char status[256];
+
+    snprintf(
+        status,
+        sizeof(status),
+        "\r\nWGET: %s\r\n"
+        "      -> %c%u:%s\r\n",
+        url,
+        'A' + drive,
+        userCode,
+        filename
+    );
+
+    _puts(
+        status
+    );
+
+    int response =
+        http.GET();
+
+    if (
+        response < 200 ||
+        response >= 300
+    )
+    {
+        snprintf(
+            status,
+            sizeof(status),
+            "WGET: HTTP error %d\r\n",
+            response
+        );
+
+        _puts(
+            status
+        );
+
+        http.end();
+        output.close();
+
+        SD.remove(
+            temporary
+        );
+
+        return 0x00FF;
+    }
+
+    WiFiClient *stream =
+        http.getStreamPtr();
+
+    int remaining =
+        http.getSize();
+
+    uint8_t ioBuffer[
+        WGET_BUFFER_SIZE
+    ];
+
+    uint32_t byteCount =
+        0;
+
+    bool okay =
+        true;
+
+    uint32_t lastData =
+        millis();
+
+    while (true)
+    {
+        int available =
+            stream
+                ? stream->available()
+                : 0;
+
+        if (available > 0)
+        {
+            size_t wanted =
+                (size_t)available;
+
+            if (
+                wanted >
+                sizeof(ioBuffer)
+            )
+            {
+                wanted =
+                    sizeof(ioBuffer);
+            }
+
+            int got =
+                stream->readBytes(
+                    ioBuffer,
+                    wanted
+                );
+
+            if (got <= 0)
+            {
+                okay =
+                    false;
+
+                break;
+            }
+
+            size_t written =
+                output.write(
+                    ioBuffer,
+                    (size_t)got
+                );
+
+            if (
+                written !=
+                (size_t)got
+            )
+            {
+                _puts(
+                    "WGET: SD write failed\r\n"
+                );
+
+                okay =
+                    false;
+
+                break;
+            }
+
+            byteCount +=
+                (uint32_t)got;
+
+            if (remaining > 0)
+            {
+                remaining -=
+                    got;
+
+                if (remaining < 0)
+                {
+                    remaining =
+                        0;
+                }
+            }
+
+            lastData =
+                millis();
+
+            continue;
+        }
+
+        if (
+            remaining == 0
+        )
+        {
+            break;
+        }
+
+        if (
+            !http.connected()
+        )
+        {
+            /*
+             * Unknown-length HTTP/1.0 bodies finish by closing the
+             * connection. Known-length responses must reach zero.
+             */
+            if (remaining < 0)
+            {
+                break;
+            }
+
+            okay =
+                false;
+
+            break;
+        }
+
+        if (
+            (uint32_t)(
+                millis() -
+                lastData
+            ) >
+                15000
+        )
+        {
+            _puts(
+                "WGET: receive timeout\r\n"
+            );
+
+            okay =
+                false;
+
+            break;
+        }
+
+        delay(1);
+    }
+
+    output.flush();
+    output.close();
+
+    http.end();
+
+    if (!okay)
+    {
+        SD.remove(
+            temporary
+        );
+
+        _puts(
+            "WGET: download failed\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    if (!wgetCommitTemporaryFile(
+        temporary,
+        destination,
+        backup
+    ))
+    {
+        SD.remove(
+            temporary
+        );
+
+        _puts(
+            "WGET: unable to install downloaded file\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    snprintf(
+        status,
+        sizeof(status),
+        "WGET: %lu bytes saved as %c%u:%s\r\n",
+        (unsigned long)byteCount,
+        'A' + drive,
+        userCode,
+        filename
+    );
+
+    _puts(
+        status
+    );
+
+    return 0;
+}
+
+
 static bool wifiConnectFromConfig()
 {
     WifiConfigEntry entries[
@@ -7786,6 +9175,15 @@ static bool wifiConnectFromConfig()
 
             WiFi.setAutoReconnect(
                 true
+            );
+
+            /*
+             * Start default UTC SNTP immediately but do not delay boot.
+             * NTP.COM can later force/wait for synchronisation or select
+             * another server for the current session.
+             */
+            cardputerConfigureNtp(
+                NTP_DEFAULT_SERVER
             );
 
             telnetServerStarted =
