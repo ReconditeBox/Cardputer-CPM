@@ -292,6 +292,11 @@ void _mockupDirEntry(uint8 mode) {
     }
     _HostnameToFCB(dmaAddr, (uint8 *)shortName);
 
+    _sysApplyFatAttributesToFCB(
+        dmaAddr,
+        fileDirEntry.attributes
+    );
+
     if (allUsers) {
         DirEntry->dr = currFindUser; // set user code for return
     } else {
@@ -395,6 +400,15 @@ uint16 _OpenFile(uint16 fcbaddr) {
             return (((uint16)hwerr << 8) | result); // Invalid filename
 
         if (_sys_openfile(&filename[0])) {
+            /*
+             * OPEN returns the file's persistent CP/M attribute bits in
+             * T1'/T2'/T3', just as a real CP/M directory lookup does.
+             */
+            _sysApplyFatAttributesToFCB(
+                fcbaddr,
+                fileDirEntry.attributes
+            );
+
             /* Get raw file size and compute record counts (round up). */
             long rawsize = _sys_filesize(&filename[0]);
             if (rawsize < 0)
@@ -613,6 +627,78 @@ uint8 _RenameFile(uint16 fcbaddr) {
     return (result);
 }
 
+/*
+ * Set persistent CP/M file attributes (BDOS function 30).
+ *
+ * The requested state comes from the high bits of T1/T2/T3 in the caller's
+ * FCB. Ambiguous filenames are supported, so STAT can change a group of files.
+ */
+uint8 _SetFileAttributes(uint16 fcbaddr) {
+    CPM_FCB *F =
+        (CPM_FCB *)_RamSysAddr(
+            fcbaddr
+        );
+
+    uint8 desired =
+        0;
+
+    if (F->tp[0] & 0x80) {
+        desired |= CPM_FILE_ATTR_READ_ONLY;
+    }
+
+    if (F->tp[1] & 0x80) {
+        desired |= CPM_FILE_ATTR_SYSTEM;
+    }
+
+    if (F->tp[2] & 0x80) {
+        desired |= CPM_FILE_ATTR_ARCHIVED;
+    }
+
+    uint8 result =
+        0xFF;
+
+    if (_SelectDisk(F->dr)) {
+        return result;
+    }
+
+    if (RW) {
+        _error(errWRITEPROT);
+        return result;
+    }
+
+    uint8 found =
+        _SearchFirst(
+            fcbaddr,
+            FALSE
+        );
+
+    while (found != 0xFF) {
+        _FCBtoHostname(
+            tmpFCB,
+            &filename[0]
+        );
+
+        if (!_sys_setfileattributes(
+            &filename[0],
+            desired
+        )) {
+            return 0xFF;
+        }
+
+        result =
+            0x00;
+
+        found =
+            _SearchNext(
+                fcbaddr,
+                FALSE
+            );
+    }
+
+    return result;
+}
+
+
 // Sequential read
 // Returns a 16-bit value: (H = number of records processed, L = BDOS return code)
 uint16 _ReadSeq(uint16 fcbaddr) {
@@ -716,6 +802,13 @@ uint16 _WriteSeq(uint16 fcbaddr) {
                 if (result != 0x00) {
                     break;
                 }
+
+                /*
+                 * A successful write means the file has changed since backup.
+                 * SdFat sets the FAT archive bit automatically; mirror that by
+                 * clearing CP/M T3' in the active FCB.
+                 */
+                F->tp[2] &= 0x7F;
 
                 /* clear unmodified flag (bit 7) */
                 F->s2 &= 0x7F;
@@ -860,6 +953,8 @@ uint16 _WriteRand(uint16 fcbaddr) {
                 if (result != 0x00) {
                     break;
                 }
+
+                F->tp[2] &= 0x7F;
 
                 F->cr = record & (MaxCR - 1);
                 F->ex = (record >> 7) & MaxEX;
