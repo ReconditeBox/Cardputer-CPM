@@ -3839,6 +3839,127 @@ static bool setdefParseChain(
 }
 
 
+static void memPrintBytes(
+    const char *label,
+    uint32_t bytes
+)
+{
+    char line[96];
+
+    uint32_t kibTenths =
+        (bytes * 10UL) /
+        1024UL;
+
+    snprintf(
+        line,
+        sizeof(line),
+        "%-18s %10lu bytes  (%lu.%lu KiB)\r\n",
+        label,
+        (unsigned long)bytes,
+        (unsigned long)(
+            kibTenths / 10UL
+        ),
+        (unsigned long)(
+            kibTenths % 10UL
+        )
+    );
+
+    _puts(
+        line
+    );
+}
+
+
+uint16 cardputerMemBdos()
+{
+    uint32_t heapTotal =
+        ESP.getHeapSize();
+
+    uint32_t heapFree =
+        ESP.getFreeHeap();
+
+    uint32_t heapMinimum =
+        ESP.getMinFreeHeap();
+
+    uint32_t heapLargest =
+        ESP.getMaxAllocHeap();
+
+    uint32_t sketchSize =
+        ESP.getSketchSize();
+
+    uint32_t sketchFree =
+        ESP.getFreeSketchSpace();
+
+    uint32_t psramTotal =
+        ESP.getPsramSize();
+
+    _puts(
+        "\r\n"
+        "Cardputer memory\r\n"
+        "-----------------\r\n"
+    );
+
+    memPrintBytes(
+        "Heap total:",
+        heapTotal
+    );
+
+    memPrintBytes(
+        "Heap free:",
+        heapFree
+    );
+
+    memPrintBytes(
+        "Heap minimum:",
+        heapMinimum
+    );
+
+    memPrintBytes(
+        "Largest block:",
+        heapLargest
+    );
+
+    _puts(
+        "\r\n"
+    );
+
+    memPrintBytes(
+        "Firmware size:",
+        sketchSize
+    );
+
+    memPrintBytes(
+        "Firmware free:",
+        sketchFree
+    );
+
+    _puts(
+        "\r\n"
+    );
+
+    if (psramTotal)
+    {
+        memPrintBytes(
+            "PSRAM total:",
+            psramTotal
+        );
+
+        memPrintBytes(
+            "PSRAM free:",
+            ESP.getFreePsram()
+        );
+    }
+    else
+    {
+        _puts(
+            "PSRAM:             none\r\n"
+        );
+    }
+
+    return 0;
+}
+
+
 uint16 cardputerSetdefBdos(
     uint16 commandTail
 )
