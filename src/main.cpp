@@ -1482,31 +1482,6 @@ static void setCardConsoleMode(
     )
     {
         terminalRenderAll(true);
-
-        if (closeTelnetClient)
-        {
-            char peer[32];
-            char announcement[80];
-
-            telnetFormatRemoteIP(
-                peer,
-                sizeof(peer)
-            );
-
-            snprintf(
-                announcement,
-                sizeof(announcement),
-                "\r\n[TELNET client disconnected from %s]\r\n",
-                peer
-            );
-
-            _puts(
-                announcement
-            );
-
-            telnetRemoteIPValid =
-                false;
-        }
     }
     else if (
         cardConsoleMode ==
@@ -1559,6 +1534,31 @@ static void setCardConsoleMode(
                 "\r\n"
             );
         }
+    }
+
+    if (closeTelnetClient)
+    {
+        char peer[32];
+        char announcement[80];
+
+        telnetFormatRemoteIP(
+            peer,
+            sizeof(peer)
+        );
+
+        snprintf(
+            announcement,
+            sizeof(announcement),
+            "\r\n[TELNET client disconnected from %s]\r\n",
+            peer
+        );
+
+        _puts(
+            announcement
+        );
+
+        telnetRemoteIPValid =
+            false;
     }
 }
 
