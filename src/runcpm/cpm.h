@@ -141,9 +141,80 @@ enum eBDOSFunc {
 #define RST_18 0xdf  // RST 18h - Hardware calls
 #define NOP 0x00     // No operation
 
-/* set up full PUN and LST filenames to be on the system drive, user 0 */
+/* Virtual character-device backing files live on system drive C:, user 0. */
+#ifdef USE_RDR
+char rdr_file[17] = {SYSTEM_DRIVE_LETTER, FOLDERCHAR, '0', FOLDERCHAR, 'R', 'D', 'R', '.', 'T', 'X', 'T', 0};
+
+/*
+ * RDR: consumes C/0/RDR.TXT sequentially.
+ *
+ * Once EOF is reached, subsequent reads return CP/M text EOF (1Ah)
+ * until the Cardputer is restarted.  A missing file also reads as 1Ah,
+ * but is retried on a later access so it may be supplied after boot.
+ */
+static uint8 _ReaderRead() {
+    if (rdr_eof) {
+        return 0x1A;
+    }
+
+    if (!rdr_open) {
+        rdr_dev = _sys_fopen_r(
+            (uint8 *)rdr_file
+        );
+
+        if (!rdr_dev) {
+            return 0x1A;
+        }
+
+        rdr_open = TRUE;
+    }
+
+    if (!rdr_dev.available()) {
+        _sys_fclose(rdr_dev);
+        rdr_open = FALSE;
+        rdr_eof = TRUE;
+
+        return 0x1A;
+    }
+
+    int ch = _sys_fgetc(rdr_dev);
+
+    if (ch < 0) {
+        _sys_fclose(rdr_dev);
+        rdr_open = FALSE;
+        rdr_eof = TRUE;
+
+        return 0x1A;
+    }
+
+    return (uint8)ch;
+}
+#endif // ifdef USE_RDR
+
 #ifdef USE_PUN
 char pun_file[17] = {SYSTEM_DRIVE_LETTER, FOLDERCHAR, '0', FOLDERCHAR, 'P', 'U', 'N', '.', 'T', 'X', 'T', 0};
+
+/*
+ * Common PUN: backend for BDOS auxiliary/punch output and BIOS AUXOUT.
+ * PUN: is byte-oriented, so flush every byte to make punched output
+ * immediately durable even when the data contains no line endings.
+ */
+static void _PunchWrite(uint8 ch) {
+    if (!pun_open) {
+        pun_dev = _sys_fopen_w(
+            (uint8 *)pun_file
+        );
+
+        if (pun_dev) {
+            pun_open = TRUE;
+        }
+    }
+
+    if (pun_dev) {
+        _sys_fputc(ch, pun_dev);
+        _sys_fflush(pun_dev);
+    }
+}
 #endif // ifdef USE_PUN
 
 #ifdef USE_LST
@@ -618,10 +689,22 @@ void _Bios(void) {
         break;
     }
     case B_AUXOUT: { // 6 - Aux/Punch output
+    #ifdef USE_PUN
+        _PunchWrite(
+            LOW_REGISTER(BC)
+        );
+    #endif // ifdef USE_PUN
         break;
     }
-    case B_READER: { // 7 - Reader input (returns 0x1a = device not implemented)
-        SET_HIGH_REGISTER(AF, 0x1a);
+    case B_READER: { // 7 - Reader input
+    #ifdef USE_RDR
+        SET_HIGH_REGISTER(
+            AF,
+            _ReaderRead()
+        );
+    #else
+        SET_HIGH_REGISTER(AF, 0x1A);
+    #endif // ifdef USE_RDR
         break;
     }
     case B_HOME: { // 8 - Home disk head
@@ -820,7 +903,11 @@ void _Bdos(void) {
        Returns: A=Char
      */
     case A_READ: {
-        HL = 0x1a;
+    #ifdef USE_RDR
+        HL = _ReaderRead();
+    #else
+        HL = 0x1A;
+    #endif // ifdef USE_RDR
         break;
     }
 
@@ -829,13 +916,9 @@ void _Bdos(void) {
      */
     case A_WRITE: {
     #ifdef USE_PUN
-        if (!pun_open) {
-            pun_dev = _sys_fopen_w((uint8 *)pun_file);
-            pun_open = TRUE;
-        }
-        if (pun_dev) {
-            _sys_fputc(LOW_REGISTER(DE), pun_dev);
-        }
+        _PunchWrite(
+            LOW_REGISTER(DE)
+        );
     #endif // ifdef USE_PUN
         break;
     }
