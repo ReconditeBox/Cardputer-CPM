@@ -1193,6 +1193,116 @@ uint8 _ccp_date(void) {
 
 #endif // Internals
 
+#if defined board_cardputer_aux
+static void _ccp_auxShow(void) {
+    uint8 iobyte =
+        _RamRead(IOByte);
+
+    bool readerUart =
+        ((iobyte >> 2) & 0x03) ==
+        0x00;
+
+    bool punchUart =
+        ((iobyte >> 4) & 0x03) ==
+        0x00;
+
+    _puts(
+        "\r\n"
+        "AUX UART\r\n"
+        "--------\r\n"
+        "115200 8N1\r\n"
+        "TX: GPIO13\r\n"
+        "RX: GPIO15\r\n"
+        "RDR: "
+    );
+
+    _puts(
+        readerUart
+            ? "UART\r\n"
+            : "RDR.TXT\r\n"
+    );
+
+    _puts(
+        "PUN: "
+    );
+
+    _puts(
+        punchUart
+            ? "UART\r\n"
+            : "PUN.TXT\r\n"
+    );
+}
+
+
+uint8 _ccp_aux(void) {
+    uint8 first =
+        _RamRead(
+            ParFCB + 1
+        );
+
+    if (
+        first == ' ' ||
+        first == 0
+    ) {
+        _ccp_auxShow();
+        return 0;
+    }
+
+    bool on =
+        first == 'O' &&
+        _RamRead(ParFCB + 2) == 'N' &&
+        (
+            _RamRead(ParFCB + 3) == ' ' ||
+            _RamRead(ParFCB + 3) == 0
+        );
+
+    bool off =
+        first == 'O' &&
+        _RamRead(ParFCB + 2) == 'F' &&
+        _RamRead(ParFCB + 3) == 'F' &&
+        (
+            _RamRead(ParFCB + 4) == ' ' ||
+            _RamRead(ParFCB + 4) == 0
+        );
+
+    if (!on && !off) {
+        _puts(
+            "\r\n"
+            "Usage: AUX [ON|OFF]\r\n"
+        );
+
+        return TRUE;
+    }
+
+    uint8 iobyte =
+        _RamRead(IOByte);
+
+    /*
+     * RDR bits 2-3 and PUN bits 4-5:
+     * 00 selects TTY:, which Cardputer-CPM maps to the EXT UART.
+     * 11 is our default file-backed RDR:/PUN: selection.
+     * Preserve CON: and LST: assignments.
+     */
+    iobyte &=
+        (uint8)~0x3C;
+
+    if (off) {
+        iobyte |=
+            0x3C;
+    }
+
+    _RamWrite(
+        IOByte,
+        iobyte
+    );
+
+    _ccp_auxShow();
+
+    return FALSE;
+}
+#endif
+
+
 #if defined board_cardputer_battery
 uint8 _ccp_battery(void) {
     return (
@@ -1209,6 +1319,9 @@ uint8 _ccp_battery(void) {
 uint8 _ccp_hlp(void) {
     _puts("\r\nCCP Commands:\r\n");
     _puts(" ?                  - Shows this list of commands\r\n");
+#if defined board_cardputer_aux
+    _puts(" AUX [ON|OFF]       - Shows/routes RDR/PUN through EXT UART\r\n");
+#endif
 #if defined board_cardputer_battery
     _puts(" BATTERY            - Shows battery level and voltage\r\n");
 #endif
@@ -1250,6 +1363,9 @@ static const Command Commands[] = {
     {"USER", _ccp_user},
 
     // Extra CCP commands
+#if defined board_cardputer_aux
+    {"AUX", _ccp_aux},
+#endif
 #if defined board_cardputer_battery
     {"BATTERY", _ccp_battery},
 #endif
