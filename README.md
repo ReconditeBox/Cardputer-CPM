@@ -25,6 +25,9 @@ Current functionality includes:
 - persistent DHCP/static IPv4 configuration with `IFCONFIG`
 - foreground Telnet server with `TELNETD`
 - foreground anonymous FTP server with `FTPD`
+- outbound DNS lookup with `DNS`
+- ICMP echo testing with `PING`
+- outbound Telnet client with `TELNET`
 - live ESP32 memory reporting with `MEM`
 - CP/M character devices `LST:`, `RDR:` and `PUN:`
 - EXT-header auxiliary UART at 115200 8N1
@@ -108,6 +111,9 @@ LOCAL.COM
 USB.COM
 BOTH.COM
 TELNETD.COM
+TELNET.COM
+DNS.COM
+PING.COM
 IFCONFIG.COM
 FTPD.COM
 MEM.COM
@@ -581,6 +587,69 @@ Changes are written back to the matching numbered entry in `/WIFI.CFG` and WiFi 
 If WiFi is offline, bare `IFCONFIG` reports the offline state. Address changes require a currently connected network so the firmware knows which numbered `WIFI.CFG` entry to modify.
 
 Network configuration changes are blocked while a network service is using the interface.
+
+---
+
+## Outbound networking
+
+Cardputer-CPM also provides CP/M commands that initiate network connections from the Cardputer itself.
+
+### DNS
+
+Resolve a host name to IPv4:
+
+```text
+C0>DNS example.com
+example.com = 93.184.216.34
+```
+
+Usage:
+
+```text
+DNS host
+```
+
+### PING
+
+Send ICMP echo requests to a host name or IPv4 address:
+
+```text
+C0>PING example.com
+```
+
+Four requests are sent by default. An optional count from 1 through 20 may be supplied:
+
+```text
+C0>PING 192.168.1.1 10
+```
+
+Press **Ctrl-C** to cancel a running ping.
+
+### TELNET
+
+Connect from CP/M to a remote Telnet service:
+
+```text
+C0>TELNET host
+```
+
+Port 23 is the default. A different TCP port may be specified:
+
+```text
+C0>TELNET host 2323
+```
+
+The command is a foreground Telnet client. Remote terminal output passes through the Cardputer's VT100 console path, and Cardputer/USB console input is sent to the remote host.
+
+Disconnect with either:
+
+```text
+Ctrl-]
+```
+
+or physical **Fn + =**.
+
+Outbound `TELNET` cannot run while `TELNETD` or `FTPD` is active.
 
 ---
 
