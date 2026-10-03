@@ -18,6 +18,7 @@
 #define BROWSER_LINE_WIDTH    78
 #define BROWSER_HISTORY_MAX   8
 #define BROWSER_FETCH_TIMEOUT 15000
+#define BROWSER_TEMP_FILE     "/BROWSE.TMP"
 
 struct CardputerBrowserLink
 {
@@ -1675,22 +1676,34 @@ static bool browserFetchPage(
         return false;
     }
 
+    SD.remove(
+        BROWSER_TEMP_FILE
+    );
+
+    File cachedPage =
+        SD.open(
+            BROWSER_TEMP_FILE,
+            O_CREAT |
+            O_WRITE |
+            O_TRUNC
+        );
+
+    if (!cachedPage)
+    {
+        http.end();
+
+        _puts(
+            "BROWSE: cannot create temporary page file\r\n"
+        );
+
+        return false;
+    }
+
     WiFiClient *stream =
         http.getStreamPtr();
 
     int remaining =
         http.getSize();
-
-    CardputerBrowserParser parser = {};
-
-    parser.baseUrl =
-        url;
-
-    parser.links =
-        links;
-
-    parser.linkCount =
-        0;
 
     uint8_t buffer[512];
 
@@ -1735,16 +1748,25 @@ static bool browserFetchPage(
                 break;
             }
 
-            for (
-                int index = 0;
-                index < got;
-                index++
+            size_t written =
+                cachedPage.write(
+                    buffer,
+                    (size_t)got
+                );
+
+            if (
+                written !=
+                (size_t)got
             )
             {
-                browserFeedHtmlByte(
-                    parser,
-                    (char)buffer[index]
+                _puts(
+                    "BROWSE: SD write failed\r\n"
                 );
+
+                okay =
+                    false;
+
+                break;
             }
 
             if (remaining > 0)
@@ -1804,23 +1826,82 @@ static bool browserFetchPage(
         delay(1);
     }
 
-    browserFinishParser(
-        parser
-    );
-
-    linkCount =
-        parser.linkCount;
+    cachedPage.flush();
+    cachedPage.close();
 
     http.end();
 
     if (!okay)
     {
+        SD.remove(
+            BROWSER_TEMP_FILE
+        );
+
         _puts(
             "BROWSE: page transfer incomplete\r\n"
         );
 
         return false;
     }
+
+    File page =
+        SD.open(
+            BROWSER_TEMP_FILE,
+            O_READ
+        );
+
+    if (!page)
+    {
+        SD.remove(
+            BROWSER_TEMP_FILE
+        );
+
+        _puts(
+            "BROWSE: cannot reopen downloaded page\r\n"
+        );
+
+        return false;
+    }
+
+    CardputerBrowserParser parser = {};
+
+    parser.baseUrl =
+        url;
+
+    parser.links =
+        links;
+
+    parser.linkCount =
+        0;
+
+    while (page.available())
+    {
+        int value =
+            page.read();
+
+        if (value < 0)
+        {
+            break;
+        }
+
+        browserFeedHtmlByte(
+            parser,
+            (char)value
+        );
+    }
+
+    page.close();
+
+    SD.remove(
+        BROWSER_TEMP_FILE
+    );
+
+    browserFinishParser(
+        parser
+    );
+
+    linkCount =
+        parser.linkCount;
 
     char summary[80];
 
