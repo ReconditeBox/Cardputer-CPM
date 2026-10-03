@@ -37,6 +37,7 @@ Current functionality includes:
 - FTP enforcement of CP/M read-only files
 - optional PNG boot splash
 - physical key to skip WiFi connection attempts
+- physical **G0** mode cycle: LOCAL -> TELNETD -> FTPD -> LOCAL
 - physical **Fn + =** emergency return to LOCAL mode
 
 Standard CP/M utilities such as `DIR`, `STAT` and `PIP` have been tested successfully.
@@ -345,6 +346,24 @@ returns the console to the Cardputer.
 `BOTH` enables Cardputer and USB output together for diagnostics.
 
 Physical **Fn + =** always forces a return to LOCAL where applicable.
+
+### G0 system-mode button
+
+While Cardputer-CPM is running, each press of the physical **G0** button advances the machine through:
+
+```text
+LOCAL -> TELNETD -> FTPD -> LOCAL
+```
+
+The transitions are machine-level rather than simulated CP/M keystrokes:
+
+- **LOCAL -> TELNETD** starts TELNETD on the default TCP port 23 and routes `CON:` to the Telnet console.
+- **TELNETD -> FTPD** cleanly closes any Telnet client/listener, returns the console locally, then starts FTPD.
+- **FTPD -> LOCAL** closes FTP control/data connections and the listener, then restores the local CP/M console.
+
+G0 also works while an FTP transfer is active.
+
+Holding **G0 during power-on/USB connection** still has its normal ESP32-S3 download-mode purpose; the mode cycle applies only after Cardputer-CPM is running.
 
 ### VT100 model
 
@@ -722,6 +741,8 @@ Physical **Fn + =**:
 - shuts down the port-21 listener;
 - exits FTPD;
 - returns to the LOCAL CP/M console.
+
+Physical **G0** performs the FTPD -> LOCAL step of the normal G0 mode cycle and also works during an active transfer.
 
 ### Authentication
 
