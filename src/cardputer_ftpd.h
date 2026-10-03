@@ -952,16 +952,6 @@ static void ftpSendDirectoryListing(
         return;
     }
 
-    if (!ftpWaitForDataClient())
-    {
-        return;
-    }
-
-    ftpReply(
-        150,
-        "Opening data connection."
-    );
-
     char userPath[
         FTP_FILE_PATH_MAX
     ];
@@ -996,6 +986,30 @@ static void ftpSendDirectoryListing(
         );
 
         ftpClosePassive();
+
+        return;
+    }
+
+    if (!ftpPassiveServer)
+    {
+        directory.close();
+
+        ftpReply(
+            425,
+            "Use PASV or EPSV first."
+        );
+
+        return;
+    }
+
+    ftpReply(
+        150,
+        "Opening data connection."
+    );
+
+    if (!ftpWaitForDataClient())
+    {
+        directory.close();
 
         return;
     }
@@ -1159,9 +1173,14 @@ static void ftpHandleRetr(
         return;
     }
 
-    if (!ftpWaitForDataClient())
+    if (!ftpPassiveServer)
     {
         file.close();
+
+        ftpReply(
+            425,
+            "Use PASV or EPSV first."
+        );
 
         return;
     }
@@ -1170,6 +1189,13 @@ static void ftpHandleRetr(
         150,
         "Opening binary data connection."
     );
+
+    if (!ftpWaitForDataClient())
+    {
+        file.close();
+
+        return;
+    }
 
     bool okay =
         true;
@@ -1278,6 +1304,21 @@ static void ftpHandleStore(
         return;
     }
 
+    if (!ftpPassiveServer)
+    {
+        ftpReply(
+            425,
+            "Use PASV or EPSV first."
+        );
+
+        return;
+    }
+
+    ftpReply(
+        150,
+        "Opening binary data connection."
+    );
+
     if (!ftpWaitForDataClient())
     {
         return;
@@ -1302,11 +1343,6 @@ static void ftpHandleStore(
 
         return;
     }
-
-    ftpReply(
-        150,
-        "Opening binary data connection."
-    );
 
     bool okay =
         true;
