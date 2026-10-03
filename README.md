@@ -327,6 +327,34 @@ Because the Telnet listener exists only in TELNETD mode, a connected Telnet clie
 
 If WiFi is offline, bare `IFCONFIG` reports that state. Address changes require a currently connected network so the firmware knows which numbered `WIFI.CFG` entry to update.
 
+## MEM command
+
+`MEM.COM` reports the Cardputer's live runtime memory usage from CP/M.
+
+Run:
+
+```text
+C0>MEM
+```
+
+The report includes:
+
+```text
+Heap total
+Heap free
+Heap minimum
+Largest block
+Firmware size
+Firmware free
+PSRAM total/free, or none
+```
+
+`Heap free` is the amount currently available. `Heap minimum` is the lowest free-heap value seen since boot, which is useful for spotting peak memory pressure. `Largest block` is the largest single allocation that could currently be satisfied even if the total free heap is larger.
+
+`Firmware size` is the current ESP32 application image size and `Firmware free` is the remaining sketch/application space reported by the ESP32 runtime.
+
+This command is intended for checking real memory headroom while CP/M, WiFi, Telnet, SD access and other firmware services are actually running.
+
 ## Telnet console
 
 WiFi connection by itself does **not** open a Telnet listener. The Cardputer accepts no incoming Telnet connection until `TELNETD` is run from CP/M.
