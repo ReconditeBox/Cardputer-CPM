@@ -743,7 +743,7 @@ C0>BROWSE
 URL:
 ```
 
-HTML is rendered as wrapped text. Links are shown inline with numbers such as `[1]`, `[2]` and so on.
+HTML is rendered as wrapped text sized for the Cardputer's local viewport. Pages are cached to a temporary SD file before display, then shown with a built-in `--More--` pager so reading slowly cannot stall the HTTP connection. Links are shown inline with numbers such as `[1]`, `[2]` and so on. Press **Enter** at `--More--` to continue or **Q** to stop displaying the rest of the page while still collecting its links.
 
 At the browser prompt:
 
