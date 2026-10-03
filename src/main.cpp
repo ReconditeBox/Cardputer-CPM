@@ -1251,23 +1251,27 @@ static void showUSBStatus()
     );
 
     M5Cardputer.Display.println(
-        "CP/M USB CONSOLE"
+        "USB CONSOLE"
     );
 
     M5Cardputer.Display.println(
-        "---------------"
-    );
-
-    M5Cardputer.Display.println();
-
-    M5Cardputer.Display.println(
-        "CON: routed to USB"
+        "-----------"
     );
 
     M5Cardputer.Display.println();
 
     M5Cardputer.Display.println(
-        "Fn+= = LOCAL"
+        "CON: USB"
+    );
+
+    M5Cardputer.Display.println(
+        "115200 8N1"
+    );
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.println(
+        "Fn+=  LOCAL"
     );
 }
 
@@ -1297,11 +1301,11 @@ static void showTelnetStatus()
     );
 
     M5Cardputer.Display.println(
-        "CP/M TELNET CONSOLE"
+        "TELNETD"
     );
 
     M5Cardputer.Display.println(
-        "------------------"
+        "-------"
     );
 
     M5Cardputer.Display.println();
@@ -1310,7 +1314,7 @@ static void showTelnetStatus()
         WiFi.localIP();
 
     M5Cardputer.Display.printf(
-        "%u.%u.%u.%u:%u\n",
+        "Listen: %u.%u.%u.%u:%u\n",
         ip[0],
         ip[1],
         ip[2],
@@ -1318,7 +1322,9 @@ static void showTelnetStatus()
         telnetPort
     );
 
-    M5Cardputer.Display.println();
+    M5Cardputer.Display.println(
+        "CON:    TELNET"
+    );
 
     if (
         telnetClient &&
@@ -1326,7 +1332,7 @@ static void showTelnetStatus()
     )
     {
         M5Cardputer.Display.println(
-            "Telnet client connected"
+            "State:  connected"
         );
 
         if (telnetRemoteIPValid)
@@ -1343,14 +1349,14 @@ static void showTelnetStatus()
     else
     {
         M5Cardputer.Display.println(
-            "Waiting for client..."
+            "State:  waiting"
         );
     }
 
     M5Cardputer.Display.println();
 
     M5Cardputer.Display.println(
-        "Fn+= = LOCAL"
+        "Fn+=  LOCAL"
     );
 }
 
@@ -5891,13 +5897,13 @@ static bool wifiConnectFromConfig()
         -1;
 
     _puts(
-        "WiFi: reading /WIFI.CFG\r\n"
+        "WiFi: connecting (press any key to skip)\r\n"
     );
 
     if (!wifiLoadConfig(entries))
     {
         _puts(
-            "WiFi: no WIFI.CFG - offline\r\n"
+            "WiFi: offline (no WIFI.CFG)\r\n"
         );
 
         telnetServerStarted =
@@ -5914,10 +5920,6 @@ static bool wifiConnectFromConfig()
 
     WiFi.mode(
         WIFI_STA
-    );
-
-    _puts(
-        "WiFi: press any Cardputer key to skip\r\n"
     );
 
     for (
@@ -5955,18 +5957,6 @@ static bool wifiConnectFromConfig()
         }
 
         haveNetwork = true;
-
-        _puts(
-            "WiFi: trying "
-        );
-
-        _puts(
-            entries[index].ssid
-        );
-
-        _puts(
-            "\r\n"
-        );
 
         WiFi.disconnect(
             false,
@@ -6093,27 +6083,18 @@ static bool wifiConnectFromConfig()
             wifiActiveConfigIndex =
                 index;
 
-            _puts(
-                "WiFi: connected to "
-            );
-
-            _puts(
-                entries[index].ssid
-            );
-
-            _puts(
-                "\r\n"
-            );
-
             IPAddress ip =
                 WiFi.localIP();
 
-            char address[32];
+            char networkStatus[128];
 
             snprintf(
-                address,
-                sizeof(address),
-                "WiFi: IP %u.%u.%u.%u\r\n",
+                networkStatus,
+                sizeof(networkStatus),
+                "WiFi: %s\r\n"
+                "IP:   %u.%u.%u.%u\r\n"
+                "Net:  TELNETD  FTPD\r\n",
+                entries[index].ssid,
                 ip[0],
                 ip[1],
                 ip[2],
@@ -6121,20 +6102,15 @@ static bool wifiConnectFromConfig()
             );
 
             _puts(
-                address
+                networkStatus
             );
 
             WiFi.setAutoReconnect(
                 true
             );
 
-
             telnetServerStarted =
                 false;
-
-            _puts(
-                "Telnet: inactive; run TELNETD to listen\r\n"
-            );
 
             return true;
         }
@@ -6143,19 +6119,15 @@ static bool wifiConnectFromConfig()
     if (!haveNetwork)
     {
         _puts(
-            "WiFi: WIFI.CFG has no SSID entries\r\n"
+            "WiFi: offline (no configured networks)\r\n"
         );
     }
     else
     {
         _puts(
-            "WiFi: no configured network available\r\n"
+            "WiFi: offline (no network found)\r\n"
         );
     }
-
-    _puts(
-        "WiFi: offline\r\n"
-    );
 
     WiFi.disconnect(
         false,
@@ -6287,11 +6259,7 @@ void setup()
 
     _puts(
         "Console: LOCAL\r\n"
-    );
-
-
-    _puts(
-        "SD card OK\r\n"
+        "SD:      ready\r\n"
     );
 
 
@@ -6309,45 +6277,20 @@ void setup()
 
 
     _puts(
-        "\r\n"
         "RunCPM "
     );
-
 
     _puts(
         VERSION
     );
 
-
     _puts(
-        "\r\n"
+        " / "
     );
-
-
-    _puts(
-        "Board: "
-    );
-
-
-    _puts(
-        BOARD
-    );
-
-
-    _puts(
-        "\r\n"
-    );
-
-
-    _puts(
-        "CPU: "
-    );
-
 
     _puts(
         CPU_IS
     );
-
 
     _puts(
         "\r\n\r\n"
