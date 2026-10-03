@@ -2081,6 +2081,17 @@ void _Bdos(void) {
     }
 #endif
 
+#if defined board_cardputer_ifconfig
+    /*
+       C = 234 (EAh) : Cardputer IFCONFIG command
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 234: {
+        HL = cardputerIfconfigBdos(DE);
+        break;
+    }
+#endif
+
     /*
        C = 248 (F8h) : Milliseconds Uptime
        Returns the number of milliseconds (since the board started).
