@@ -766,7 +766,7 @@ H or ?          help
 Q               quit
 ```
 
-The local Cardputer cursor keys are the normal **Fn + arrow** keys. The same VT100 controls also work through USB and TELNETD.
+On the Cardputer itself, cursor navigation uses the normal **Fn + arrow** keys. **Space** and **-** provide page down/up locally. Home/End and Page Up/Page Down are additionally recognised when an external USB or Telnet terminal sends their standard VT100-style escape sequences.
 
 `D` passes the selected HTTP/HTTPS link to the existing WGET download path and prompts for an optional CP/M 8.3 destination filename.
 
@@ -915,7 +915,7 @@ Connection and disconnection events show the remote IPv4 address:
 [FTP client disconnected from 192.168.1.23]
 ```
 
-Unlike TELNETD, an FTP client disconnect does **not** terminate FTPD. The server returns to waiting for another client until **Fn + =** is pressed.
+Unlike TELNETD, an FTP client disconnect does **not** terminate FTPD. The server returns to waiting for another client until **Fn + =** is pressed or **G0** advances the machine from FTPD back to LOCAL.
 
 ### FTP filesystem view
 
