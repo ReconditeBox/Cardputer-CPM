@@ -278,6 +278,55 @@ static void ftpConsoleConnectionEvent(
 }
 
 
+static void ftpConsoleTransferEvent(
+    const char *operation,
+    const char *name,
+    uint32_t byteCount,
+    bool okay
+)
+{
+    char message[128];
+
+    snprintf(
+        message,
+        sizeof(message),
+        "\r\nFTPD: %s %s: %lu bytes %s\r\n",
+        operation
+            ? operation
+            : "XFER",
+        name
+            ? name
+            : "?",
+        (unsigned long)byteCount,
+        okay
+            ? "complete"
+            : "aborted"
+    );
+
+    _puts(
+        message
+    );
+
+    snprintf(
+        ftpLastEvent,
+        sizeof(ftpLastEvent),
+        "%s %s: %lu bytes %s",
+        operation
+            ? operation
+            : "XFER",
+        name
+            ? name
+            : "?",
+        (unsigned long)byteCount,
+        okay
+            ? "complete"
+            : "aborted"
+    );
+
+    ftpShowStatus();
+}
+
+
 static void ftpReply(
     int code,
     const char *text
@@ -1250,10 +1299,16 @@ static void ftpHandleRetr(
         FTP_FILE_PATH_MAX
     ];
 
+    char canonicalName[
+        FTP_FILE_NAME_MAX
+    ];
+
     if (!ftpBuildFilePath(
         argument,
         path,
-        sizeof(path)
+        sizeof(path),
+        canonicalName,
+        sizeof(canonicalName)
     ))
     {
         ftpReply(
@@ -1315,6 +1370,9 @@ static void ftpHandleRetr(
     bool okay =
         true;
 
+    uint32_t transferred =
+        0;
+
     while (
         ftpActive &&
         file.available()
@@ -1336,6 +1394,9 @@ static void ftpHandleRetr(
                 ftpDataBuffer,
                 (size_t)count
             );
+
+        transferred +=
+            (uint32_t)written;
 
         if (
             written !=
@@ -1368,6 +1429,13 @@ static void ftpHandleRetr(
 
     ftpClosePassive();
 
+    ftpConsoleTransferEvent(
+        "RETR",
+        canonicalName,
+        transferred,
+        okay
+    );
+
     ftpReply(
         okay
             ? 226
@@ -1393,10 +1461,16 @@ static void ftpHandleStore(
         FTP_FILE_PATH_MAX
     ];
 
+    char canonicalName[
+        FTP_FILE_NAME_MAX
+    ];
+
     if (!ftpBuildFilePath(
         argument,
         path,
-        sizeof(path)
+        sizeof(path),
+        canonicalName,
+        sizeof(canonicalName)
     ))
     {
         ftpReply(
@@ -1461,6 +1535,9 @@ static void ftpHandleStore(
 
     bool okay =
         true;
+
+    uint32_t transferred =
+        0;
 
     bool draining =
         false;
@@ -1578,6 +1655,9 @@ static void ftpHandleStore(
                 (size_t)count
             );
 
+        transferred +=
+            (uint32_t)written;
+
         if (
             written !=
             (size_t)count
@@ -1601,6 +1681,15 @@ static void ftpHandleStore(
     }
 
     ftpClosePassive();
+
+    ftpConsoleTransferEvent(
+        append
+            ? "APPE"
+            : "STOR",
+        canonicalName,
+        transferred,
+        okay
+    );
 
     ftpReply(
         okay
