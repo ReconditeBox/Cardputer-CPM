@@ -1903,7 +1903,7 @@ static bool browserFetchPage(
     linkCount =
         parser.linkCount;
 
-    char summary[80];
+    char summary[160];
 
     snprintf(
         summary,
