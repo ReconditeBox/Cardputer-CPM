@@ -7,6 +7,17 @@
 # Networks are tried in numeric order.
 # PASSn may be left empty for an open network.
 #
+# Addressing defaults to DHCP. To give one network a static address,
+# add IPn, MASKn and GWn for the same network number. DNSn is optional;
+# if omitted, the gateway address is used as DNS.
+#
+# Example static settings for network 1:
+#
+# IP1=192.168.1.50
+# MASK1=255.255.255.0
+# GW1=192.168.1.1
+# DNS1=192.168.1.1
+#
 # Passwords are stored as plain text on the SD card.
 
 SSID1=Home Network
