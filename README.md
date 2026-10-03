@@ -28,6 +28,9 @@ Current functionality includes:
 - outbound DNS lookup with `DNS`
 - ICMP echo testing with `PING`
 - outbound Telnet client with `TELNET`
+- HTTP/HTTPS file download with `WGET`
+- NTP UTC clock synchronisation with `NTP`
+- current UTC date/time display with `TIME`
 - live ESP32 memory reporting with `MEM`
 - CP/M character devices `LST:`, `RDR:` and `PUN:`
 - EXT-header auxiliary UART at 115200 8N1
@@ -115,6 +118,9 @@ TELNETD.COM
 TELNET.COM
 DNS.COM
 PING.COM
+WGET.COM
+NTP.COM
+TIME.COM
 IFCONFIG.COM
 FTPD.COM
 MEM.COM
@@ -677,6 +683,64 @@ Ctrl-]
 or physical **Fn + =**.
 
 Outbound `TELNET` may run while `TELNETD` is active, including from an inbound Telnet console session. It remains unavailable while `FTPD` is active.
+
+### WGET
+
+Download a file directly into CP/M storage:
+
+```text
+C0>WGET http://example.com/README.TXT
+```
+
+If the final URL component is already a valid CP/M 8.3 filename, that name is used on the current drive and current user area.
+
+An explicit destination may be supplied:
+
+```text
+C0>WGET http://example.com/file.bin PROGRAM.COM
+C0>WGET https://example.com/file.bin F:PROGRAM.COM
+```
+
+The destination is always restricted to a CP/M drive, the current user area, and a valid 8.3 filename. Existing CP/M read-only files are protected.
+
+WGET downloads through a temporary file and replaces the destination only after the transfer completes successfully, so a failed transfer does not leave a truncated target.
+
+Both `http://` and `https://` are supported. HTTPS traffic is encrypted, but this first implementation does **not** validate the remote certificate because the firmware does not yet carry a CA bundle.
+
+`WGET` is unavailable while FTPD owns the transfer service.
+
+### NTP and TIME
+
+After WiFi connects, Cardputer-CPM starts UTC time synchronisation with:
+
+```text
+pool.ntp.org
+```
+
+Boot is not delayed waiting for NTP.
+
+Force a synchronisation and wait for a result:
+
+```text
+C0>NTP
+```
+
+Use another server for the current session:
+
+```text
+C0>NTP time.cloudflare.com
+```
+
+A successful sync reports the server and UTC date/time.
+
+Display the current clock without contacting an NTP server:
+
+```text
+C0>TIME
+Time: 2026-10-03 20:15:42 UTC
+```
+
+The host clock is deliberately kept in UTC. Local timezone handling can be added separately without changing the underlying absolute time.
 
 ---
 
