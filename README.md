@@ -1,32 +1,46 @@
 # Cardputer-CPM
 
-CP/M on the **M5Stack Cardputer Adv**, using RunCPM as the emulation core and the Cardputer's built-in screen, keyboard and microSD card as the primary machine interface.
+CP/M on the **M5Stack Cardputer Adv**, using **RunCPM** as the emulation core and the Cardputer's built-in display, keyboard, microSD slot, USB CDC and WiFi as the machine interfaces.
 
-## Current status
+The aim is a practical standalone CP/M computer rather than a serial-console demonstration: boot from microSD, run real CP/M software locally, use removable logical media, and move files over the network without removing the SD card.
 
-The current build is a working proof of concept:
+## Features
+
+Current functionality includes:
 
 - Z80-compatible CP/M environment
 - CP/M boots directly on the Cardputer Adv
-- Built-in Cardputer keyboard works as the local console
-- Built-in 240x135 display works as the local console
+- built-in keyboard and 240 x 135 LCD as the default console
+- logical 80 x 24 VT100 terminal with a 40 x 16 local viewport
 - microSD-backed CP/M drives
-- Drives A: through P: map to ordinary directories on the SD card
-- CP/M user areas are represented as subdirectories
-- Real CP/M `.COM` programs execute successfully
-- USB CDC console works with ordinary terminal emulators such as PuTTY
-- Console can be switched between LOCAL, USB and BOTH modes
-- Physical **Fn + =** always forces the console back to LOCAL mode
+- fixed **C:** system/default drive
+- removable directory-backed **A:** and **B:** media slots
+- fixed **C:** through **P:** drives
+- CP/M user areas 0 through 15
+- real CP/M `.COM` programs
+- `PROFILE.SUB` cold-boot startup
+- configurable CCP command search path with `SETDEF`
+- USB CDC console
+- WiFi configuration from `WIFI.CFG`
+- persistent DHCP/static IPv4 configuration with `IFCONFIG`
+- foreground Telnet server with `TELNETD`
+- foreground anonymous FTP server with `FTPD`
+- live ESP32 memory reporting with `MEM`
+- optional PNG boot splash
+- physical key to skip WiFi connection attempts
+- physical **Fn + =** emergency return to LOCAL mode
 
-Programs already tested include standard CP/M utilities such as `DIR`, `STAT` and `PIP`.
+Standard CP/M utilities such as `DIR`, `STAT` and `PIP` have been tested successfully.
+
+---
 
 ## Hardware
 
-- M5Stack Cardputer Adv
+- **M5Stack Cardputer Adv**
 - microSD card
 - USB connection for flashing and optional USB CDC console
 
-The SD interface currently uses:
+The SD interface uses:
 
 | Signal | GPIO |
 | --- | ---: |
@@ -35,38 +49,90 @@ The SD interface currently uses:
 | MOSI | 14 |
 | CS | 12 |
 
-## Development environment
+---
 
-The project is built with **PlatformIO** using the Arduino framework for ESP32-S3.
+## Quick start
 
-The main PlatformIO environment is:
+### 1. Prepare the SD card
+
+At minimum, create the system drive and user 0:
 
 ```text
-m5stack-cardputer
+C/
+    0/
 ```
 
-Dependencies are defined in `platformio.ini`.
+Place the CP/M utilities you want available globally in:
 
-## SD card layout
-
-CP/M drives are ordinary directories on the microSD card rather than disk-image files.
+```text
+C/0/
+```
 
 For example:
 
 ```text
-A/0
-B/0
-C/0
-...
-P/0
+C/0/STAT.COM
+C/0/PIP.COM
+C/0/SUBMIT.COM
 ```
 
-The first directory level is the CP/M drive and the second is the CP/M user area.
-
-The Cardputer boots with **C: user 0** as its system/default drive. System utilities should therefore be placed in:
+The Cardputer boots as:
 
 ```text
-C/0
+C0>
+```
+
+### 2. Add the Cardputer utilities
+
+The repository includes these small CP/M commands:
+
+```text
+LOCAL.COM
+USB.COM
+BOTH.COM
+TELNETD.COM
+IFCONFIG.COM
+FTPD.COM
+MEM.COM
+SETDEF.COM
+```
+
+For normal use, copy them into:
+
+```text
+C/0/
+```
+
+### 3. Build and upload
+
+Build:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer
+```
+
+Upload:
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer -t upload
+```
+
+The upload procedure is described in [Building and flashing](#building-and-flashing).
+
+---
+
+## CP/M storage layout
+
+Cardputer-CPM uses ordinary directories on the microSD card rather than CP/M disk-image files for its normal fixed drives.
+
+### System drive
+
+**C:** is the fixed system/default drive.
+
+User 0 is stored as:
+
+```text
+C/0/
 ```
 
 For example:
@@ -75,43 +141,207 @@ For example:
 C/0/STAT.COM
 ```
 
-appears to CP/M as `STAT.COM` on drive C:, user 0.
+appears in CP/M as `STAT.COM` on C: user 0.
 
-If an external command is not found on the current drive, the internal CCP also searches C: user 0. SUBMIT batch lookup and the PUN:/LST: host files likewise use C: as the system drive.
-
-Additional user areas can be created as required:
+The internal CCP's default command search chain is:
 
 ```text
-A/1
-A/2
-...
-A/15
+*,C:
 ```
 
-This makes it possible to manage CP/M files directly from another computer by inserting the SD card and copying normal files.
+so an unqualified external command is searched for on the current drive first and then on C:.
 
-### Moving the system files to C:
+`PROFILE.SUB`, SUBMIT support, and the PUN:/LST: host files also use C: as the system drive.
 
-Before flashing a firmware build that uses C: as the system drive, make sure the SD card contains a `C/0` directory and copy the CP/M system/utilities that were previously kept in `A/0` into `C/0`.
+### Fixed drives
 
-Keep the old `A/0` copy until the new firmware has booted successfully and the utilities have been tested from `C0>`. A: and B: remain ordinary directory-backed CP/M drives for now; removable-disk behaviour is a separate future change.
+Drives **C:** through **P:** use the ordinary RunCPM directory layout:
 
+```text
+C/0
+C/1
+...
+D/0
+...
+P/0
+```
 
-## Console modes
+User areas 10 through 15 are stored as hexadecimal directories:
 
-The machine currently supports four console-routing modes.
+```text
+A
+B
+C
+D
+E
+F
+```
 
-### LOCAL
+so, for example, CP/M user 15 on drive F: is backed by:
 
-The Cardputer screen and keyboard are the CP/M console.
+```text
+F/F/
+```
 
-This is the default at boot.
+### Removable A: and B:
 
-### USB
+Drives **A:** and **B:** are removable logical media slots. Their media live below:
 
-CP/M console I/O is routed through USB CDC. A normal serial terminal emulator can be used on the host computer.
+```text
+MEDIA/
+```
 
-The development setup has been tested at:
+See [Removable A: and B: media](#removable-a-and-b-media).
+
+### F: as the network transfer drive
+
+The FTP server is intentionally restricted to **F:**.
+
+That makes F: a convenient transfer area for adding or retrieving CP/M programs over WiFi without removing the SD card. FTP user selection maps directly to F: user areas 0 through 15.
+
+---
+
+## Boot sequence
+
+### Optional splash screen
+
+If the SD-card root contains:
+
+```text
+/SPLASH.PNG
+```
+
+it is displayed during boot.
+
+For the best result use:
+
+```text
+240 x 135 pixels
+```
+
+The splash waits for a **physical Cardputer keypress** before boot continues.
+
+If the file is missing, unreadable, too large for available memory, or cannot be decoded, boot continues normally.
+
+### Skipping WiFi
+
+After the splash, the firmware tries the networks in `WIFI.CFG`.
+
+During these connection attempts, pressing **any physical Cardputer key** skips the remaining WiFi attempts and continues booting offline.
+
+The splash-dismiss key and WiFi-skip key are both consumed and are not passed through to CP/M.
+
+USB or network input cannot dismiss the splash or skip WiFi.
+
+### Cold-boot PROFILE.SUB
+
+If this file exists:
+
+```text
+C/0/PROFILE.SUB
+```
+
+it is executed automatically once during a cold boot, as though the user had entered:
+
+```text
+C0>C:PROFILE
+```
+
+The normal CCP `.SUB` handling then invokes `SUBMIT.COM`.
+
+`PROFILE.SUB` is not run again on ordinary warm boots after programs exit.
+
+A sample `PROFILE.SUB.EXAMPLE` is included in the repository.
+
+---
+
+## Console and terminal
+
+Cardputer-CPM supports four console-routing modes:
+
+| Mode | Console |
+| --- | --- |
+| LOCAL | Cardputer LCD + keyboard |
+| USB | USB CDC terminal |
+| BOTH | Cardputer + USB |
+| TELNET | Telnet client |
+
+LOCAL is the default at boot.
+
+### Console commands
+
+```text
+LOCAL.COM
+USB.COM
+BOTH.COM
+```
+
+Examples:
+
+```text
+C0>USB
+```
+
+routes CP/M console I/O to USB.
+
+From the USB terminal:
+
+```text
+C0>LOCAL
+```
+
+returns the console to the Cardputer.
+
+`BOTH` enables Cardputer and USB output together for diagnostics.
+
+Physical **Fn + =** always forces a return to LOCAL where applicable.
+
+### VT100 model
+
+CP/M `CON:` uses a VT100-style terminal model.
+
+The local terminal maintains a logical:
+
+```text
+80 x 24
+```
+
+screen, with the Cardputer LCD displaying a:
+
+```text
+40 x 16
+```
+
+viewport.
+
+The viewport normally follows the logical cursor automatically.
+
+Keyboard controls:
+
+```text
+Fn + arrow       VT100 cursor key sent to CP/M
+Aa + Fn + arrow  pan the local viewport
+```
+
+Manual panning moves 8 logical columns horizontally or 4 rows vertically.
+
+Both normal VT100 cursor mode:
+
+```text
+ESC [ A/B/C/D
+```
+
+and application cursor mode:
+
+```text
+ESC O A/B/C/D
+```
+
+are supported for Cardputer cursor-key input.
+
+### USB terminal settings
+
+The USB CDC console has been tested with ordinary serial terminal programs such as PuTTY using:
 
 ```text
 115200 baud
@@ -121,134 +351,21 @@ no parity
 no flow control
 ```
 
-### BOTH
+Close any other application that already has the Cardputer COM port open before starting a terminal emulator.
 
-Output is sent to both the Cardputer and USB consoles for diagnostic use.
+---
 
-## Console switching commands
+## Networking
 
-Three tiny CP/M commands are included in the repository:
+WiFi is optional. If no configured network connects, CP/M continues booting offline.
 
-```text
-LOCAL.COM
-USB.COM
-BOTH.COM
-```
+### WIFI.CFG
 
-From CP/M:
+WiFi configuration is read from:
 
 ```text
-C0>USB
+/WIFI.CFG
 ```
-
-switches control to the USB console.
-
-From the USB terminal:
-
-```text
-C0>LOCAL
-```
-
-returns control to the Cardputer.
-
-`BOTH` enables both consoles.
-
-Regardless of the selected mode, pressing **Fn + =** on the Cardputer forces the console back to LOCAL mode.
-
-## Terminal model
-
-The intended terminal model for CP/M `CON:` is **VT100**.
-
-USB terminals can already process the VT100/ANSI output stream directly.
-
-The local Cardputer terminal now maintains a logical **80x24 VT100 screen** with the physical **40x16 display acting as a viewport**.
-
-The viewport normally follows the logical VT100 cursor automatically.
-
-Cardputer cursor-key controls are:
-
-```text
-Fn + arrow       -> VT100 cursor key sent to CP/M
-Aa + Fn + arrow  -> pan the local viewport
-```
-
-Manual panning moves 8 logical columns horizontally or 4 rows vertically per key press. The next CP/M output or VT100 cursor movement automatically brings the active cursor back into view.
-
-VT100 normal cursor mode (`ESC [ A/B/C/D`) and application cursor mode (`ESC O A/B/C/D`) are both recognised for Cardputer keyboard input.
-
-## Building
-
-Open the project folder in Visual Studio Code with the PlatformIO extension installed.
-
-Build from the PlatformIO controls, or from a VS Code terminal with:
-
-```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer
-```
-
-## Uploading
-
-The Cardputer Adv can be placed into its upload mode with the following procedure:
-
-1. Turn the Cardputer off.
-2. Hold **G0**.
-3. Connect USB while still holding **G0**.
-4. Release **G0**.
-5. Upload from PlatformIO.
-
-From a VS Code terminal:
-
-```powershell
-& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer -t upload
-```
-
-## USB terminal testing
-
-Close any other program that has the Cardputer COM port open before starting another terminal emulator.
-
-For PuTTY, select **Serial** and use the Cardputer's current COM port with:
-
-```text
-Speed:       115200
-Data bits:   8
-Stop bits:   1
-Parity:      None
-Flow control: None
-```
-
-Boot normally in LOCAL mode, then enter:
-
-```text
-USB
-```
-
-on the Cardputer to hand the CP/M console to the USB terminal.
-
-## RunCPM
-
-This project incorporates source derived from **RunCPM** by Mockba the Borg:
-
-https://github.com/MockbaTheBorg/RunCPM
-
-RunCPM is distributed under the MIT License.
-
-The original RunCPM copyright and licence text are preserved in:
-
-```text
-src/runcpm/LICENSE
-```
-
-Cardputer-specific integration and console work are maintained in this repository.
-
-## License
-
-Cardputer-CPM is distributed under the MIT License. See the root `LICENSE` file.
-
-Portions derived from RunCPM remain subject to the RunCPM MIT copyright and licence notice in `src/runcpm/LICENSE`.
-
-## WiFi configuration
-
-WiFi is configured from a plain-text file named `WIFI.CFG` in the root of the SD card.
 
 Example:
 
@@ -260,11 +377,37 @@ SSID2=Phone Hotspot
 PASS2=second-password
 ```
 
-Entries are tried in numeric order. The first network that connects is used. Up to 10 entries (`SSID1` through `SSID10`) are supported.
+Up to 10 entries are supported:
 
-Blank lines and lines beginning with `#` or `;` are ignored. An empty `PASSn=` selects an open network.
+```text
+SSID1 ... SSID10
+```
 
-Addressing defaults to DHCP. A network can instead have persistent static addressing by adding `IPn`, `MASKn` and `GWn` for the same entry. `DNSn` is optional; if it is omitted for a static entry, the gateway is used as DNS.
+Entries are tried in numeric order and the first successful connection is used.
+
+Blank lines and lines beginning with `#` or `;` are ignored.
+
+An empty password selects an open network:
+
+```text
+PASS1=
+```
+
+Passwords are stored in plain text on the SD card. The firmware does not print them to the console.
+
+A template is provided as:
+
+```text
+WIFI.CFG.EXAMPLE
+```
+
+Copy it to the SD-card root as `WIFI.CFG` and edit it for your networks.
+
+### DHCP and static IPv4
+
+DHCP is the default.
+
+A network may instead contain persistent static addressing:
 
 ```text
 SSID1=Home Network
@@ -275,17 +418,17 @@ GW1=192.168.1.1
 DNS1=192.168.1.1
 ```
 
-If `WIFI.CFG` is missing, contains no usable SSIDs, or none of the configured networks can be reached, the machine continues booting CP/M offline.
+`IPn`, `MASKn` and `GWn` are required together for static mode.
 
-Passwords are stored in plain text on the SD card. The firmware never prints passwords to the console.
+`DNSn` is optional. If omitted, the gateway is used as DNS.
 
-A template is included as `WIFI.CFG.EXAMPLE`. Copy it to the SD-card root, rename it to `WIFI.CFG`, and enter your own SSIDs and passwords.
+---
 
-## IFCONFIG command
+## IFCONFIG
 
-`IFCONFIG.COM` displays the current WiFi configuration and can change the active `WIFI.CFG` entry between DHCP and a persistent static IPv4 address.
+`IFCONFIG.COM` displays the current WiFi configuration and can update the active `WIFI.CFG` entry.
 
-Display the current connection:
+Display status:
 
 ```text
 C0>IFCONFIG
@@ -299,7 +442,7 @@ DNS:   192.168.1.1
 Mode:  DHCP
 ```
 
-Switch the currently connected network back to DHCP:
+Return the current network to DHCP:
 
 ```text
 C0>IFCONFIG DHCP
@@ -311,25 +454,67 @@ Set a persistent static address:
 C0>IFCONFIG 192.168.1.50 255.255.255.0 192.168.1.1
 ```
 
-Supply DNS explicitly as an optional fourth address:
+Optionally specify DNS:
 
 ```text
 C0>IFCONFIG 192.168.1.50 255.255.255.0 192.168.1.1 8.8.8.8
 ```
 
-Changes are written to the matching numbered entry in `/WIFI.CFG` and WiFi is reconnected immediately. If `DNSn` is omitted in static mode, the gateway is used as DNS.
+Changes are written back to the matching numbered entry in `/WIFI.CFG` and WiFi reconnects immediately.
 
-`IFCONFIG DHCP` removes the active entry's `IPn`, `MASKn`, `GWn` and `DNSn` lines, restoring normal DHCP on this and subsequent boots.
+`IFCONFIG DHCP` removes that entry's `IPn`, `MASKn`, `GWn` and `DNSn` lines.
 
-`IFCONFIG` is deliberately unavailable while TELNETD mode is active. Network administration must be performed from LOCAL, USB, or BOTH console mode.
+If WiFi is offline, bare `IFCONFIG` reports the offline state. Address changes require a currently connected network so the firmware knows which numbered `WIFI.CFG` entry to modify.
 
-Because the Telnet listener exists only in TELNETD mode, a connected Telnet client always means `IFCONFIG` is unavailable. Disconnect or return to LOCAL first, then inspect or change the network settings.
+Network configuration changes are blocked while a network service is using the interface.
 
-If WiFi is offline, bare `IFCONFIG` reports that state. Address changes require a currently connected network so the firmware knows which numbered `WIFI.CFG` entry to update.
+---
 
-## FTPD command
+## TELNETD
 
-`FTPD.COM` starts an anonymous FTP server on TCP port 21. The FTP listener exists only while FTPD is active.
+`TELNETD.COM` starts a foreground Telnet console service.
+
+WiFi connection by itself does **not** open a Telnet listener.
+
+Default port:
+
+```text
+C0>TELNETD
+```
+
+Custom port:
+
+```text
+C0>TELNETD 2323
+```
+
+Valid ports are 1 through 65535.
+
+Running `TELNETD`:
+
+1. creates the listener;
+2. routes CP/M `CON:` to TELNET;
+3. displays the listening address and port on the Cardputer;
+4. accepts one client.
+
+Connection events include the remote IPv4 address:
+
+```text
+[TELNET client connected from 192.168.1.23]
+[TELNET client disconnected from 192.168.1.23]
+```
+
+If the Telnet client disconnects, TELNETD ends completely, the listener closes, and `CON:` returns to LOCAL.
+
+A new Telnet client cannot connect until `TELNETD` is run again.
+
+Physical **Fn + =**, `LOCAL.COM`, or switching to USB/BOTH also ends TELNETD and closes the client/listener.
+
+---
+
+## FTPD
+
+`FTPD.COM` starts a foreground anonymous FTP server on TCP port 21.
 
 Run:
 
@@ -337,24 +522,40 @@ Run:
 C0>FTPD
 ```
 
-FTPD is a foreground service mode. Running `FTPD` leaves the normal CP/M prompt and shows a dedicated FTP status screen on the Cardputer, in the same style as TELNETD. CP/M does not return to its normal prompt while FTPD is active. The physical **Fn + =** key combination stops FTPD completely, closes any active FTP client and data connection, removes the listener, and returns to the LOCAL CP/M console.
+While active, the normal CP/M prompt is replaced by a dedicated FTP status screen showing the listening address, current user area and client state.
 
-FTPD accepts one control client at a time. When a client connects or disconnects, the event is reported on the CP/M console together with the remote IPv4 address:
+Physical **Fn + =**:
+
+- closes the FTP client if connected;
+- closes any data connection;
+- shuts down the port-21 listener;
+- exits FTPD;
+- returns to the LOCAL CP/M console.
+
+### Authentication
+
+FTPD is anonymous.
+
+`USER` is accepted and the supplied `PASS` value is ignored.
+
+Only one FTP control client is accepted at a time.
+
+Connection and disconnection events show the remote IPv4 address:
 
 ```text
 [FTP client connected from 192.168.1.23]
 [FTP client disconnected from 192.168.1.23]
 ```
 
-When a client logs out or drops its connection, FTPD itself remains in its foreground FTP mode and returns to listening for the next client. Only physical **Fn + =** stops the FTP service and returns to the CP/M prompt.
-
-Authentication is anonymous. `USER` is accepted and the supplied `PASS` value is ignored.
+Unlike TELNETD, an FTP client disconnect does **not** terminate FTPD. The server returns to waiting for another client until **Fn + =** is pressed.
 
 ### FTP filesystem view
 
-FTPD can access **only CP/M drive F:**. No other CP/M drive and no arbitrary SD-card path is exposed.
+FTPD exposes **only F:**.
 
-There is no FTP directory hierarchy. Instead, `CWD` selects the CP/M user area:
+No other CP/M drive and no arbitrary SD-card path is accessible.
+
+There are no FTP directories. `CWD` is repurposed to select the CP/M user area:
 
 ```text
 CWD 0
@@ -363,23 +564,166 @@ CWD 1
 CWD 15
 ```
 
-`PWD` reports the current user area as `/0` through `/15`. The session always starts in F: user 0.
+`PWD` reports:
 
-Internally these user areas use RunCPM's normal F: backing folders (`F/0` through `F/9`, then `F/A` through `F/F`), but those folders are not exposed as ordinary FTP directories.
+```text
+/0
+...
+/15
+```
 
-`MKD`, `RMD`, `CDUP`, path traversal, embedded drive names and access outside the selected F: user area are rejected.
+Every new FTP session starts in F: user 0.
 
-Uploaded, downloaded, renamed and deleted files are restricted to CP/M-compatible 8.3 filenames. Upload names are canonicalised to uppercase.
+Internally these map to:
 
-Supported data operations include passive-mode `LIST`, `NLST`, `MLSD`, `RETR`, `STOR`, `APPE`, `DELE`, `RNFR`/`RNTO` and `SIZE`. FTP active mode (`PORT`/`EPRT`) is not supported; clients must use `PASV` or `EPSV`.
+```text
+F/0
+...
+F/9
+F/A
+...
+F/F
+```
 
-FTPD and TELNETD are mutually exclusive. `TELNETD` cannot be started while FTPD is active, and FTPD cannot be started while TELNETD is active.
+but those host directories are not exposed as an FTP directory tree.
 
-A bare `IFCONFIG` may still display the current network status while FTPD is active, but DHCP/static address changes are refused until FTPD is stopped.
+The following are rejected:
 
-## MEM command
+- `MKD`
+- `RMD`
+- `CDUP`
+- path traversal
+- embedded drive names
+- access outside the selected F: user area
 
-`MEM.COM` reports the Cardputer's live runtime memory usage from CP/M.
+FTP filenames are restricted to CP/M-compatible 8.3 names and uploads are canonicalised to uppercase.
+
+Supported operations include:
+
+```text
+LIST
+NLST
+MLSD
+RETR
+STOR
+APPE
+DELE
+RNFR / RNTO
+SIZE
+PASV
+EPSV
+```
+
+Active-mode FTP (`PORT`/`EPRT`) is not supported.
+
+FTPD and TELNETD are mutually exclusive.
+
+A bare `IFCONFIG` may display network status while FTPD is active, but address changes are refused until FTPD is stopped.
+
+---
+
+## Removable A: and B: media
+
+A: and B: are physical-style logical media slots backed by directories below:
+
+```text
+MEDIA/
+```
+
+Both slots start empty after power-up.
+
+Example:
+
+```text
+MEDIA/
+    WORDSTAR/
+        0/
+            WS.COM
+    BASIC/
+        0/
+    GAMES/
+        0/
+```
+
+Each directory immediately below `MEDIA/` represents one removable medium.
+
+Its CP/M user areas use:
+
+```text
+0 ... 9, A ... F
+```
+
+User 0 is created automatically when a medium is first mounted if necessary.
+
+### Physical controls
+
+```text
+Fn+A    manage A:
+Fn+B    manage B:
+```
+
+If the slot is empty, a local chooser displays the available directories below `MEDIA/`.
+
+Use the Cardputer cursor keys to choose a medium and **Enter** to mount it.
+
+Escape or Backspace cancels.
+
+If media is already mounted, **Fn+A** or **Fn+B** displays an eject confirmation.
+
+Mount/eject is deliberately **physical-device-only**. USB, Telnet and CP/M programs may access currently mounted media, but they cannot insert or eject it.
+
+Changing media invalidates RunCPM's cached login/read-only state so the next access sees the new medium.
+
+Only directory-backed removable media are supported at present. `.DSK` files are ignored by the chooser.
+
+Stock CP/M 2.2 `SUBMIT.COM` normally creates `A:$$$.SUB`. Cardputer-CPM redirects only that legacy temporary file to fixed C: internally so SUBMIT and `PROFILE.SUB` continue to work even when A: is empty or has removable media inserted.
+
+---
+
+## SETDEF
+
+`SETDEF.COM` controls the internal CCP drive search chain for external commands and SUB files.
+
+Default:
+
+```text
+*,C:
+```
+
+Display the current chain:
+
+```text
+C0>SETDEF
+Drive Search Chain: *,C:
+```
+
+Change it:
+
+```text
+C0>SETDEF C:,*
+Drive Search Chain: C:,*
+```
+
+Use only the current drive:
+
+```text
+C0>SETDEF *
+Drive Search Chain: *
+```
+
+Up to four entries are supported using drives A: through P: and `*`.
+
+Explicitly drive-qualified commands bypass the SETDEF chain.
+
+The CP/M Plus bracket options `TEMPORARY`, `ORDER`, `DISPLAY` and `PAGE` are not implemented and are rejected rather than silently ignored.
+
+Place `SETDEF.COM` in `C/0` with the other system utilities.
+
+---
+
+## MEM
+
+`MEM.COM` reports live ESP32 runtime memory information from CP/M.
 
 Run:
 
@@ -399,182 +743,86 @@ Firmware free
 PSRAM total/free, or none
 ```
 
-`Heap free` is the amount currently available. `Heap minimum` is the lowest free-heap value seen since boot, which is useful for spotting peak memory pressure. `Largest block` is the largest single allocation that could currently be satisfied even if the total free heap is larger.
+`Heap free` is the currently available heap.
 
-`Firmware size` is the current ESP32 application image size and `Firmware free` is the remaining sketch/application space reported by the ESP32 runtime.
+`Heap minimum` is the lowest free-heap value observed since boot and is useful for identifying peak memory pressure.
 
-This command is intended for checking real memory headroom while CP/M, WiFi, Telnet, SD access and other firmware services are actually running.
+`Largest block` is the largest single allocation that can currently be satisfied.
 
-## Telnet console
+The command is useful for comparing memory usage with WiFi and network services active.
 
-WiFi connection by itself does **not** open a Telnet listener. The Cardputer accepts no incoming Telnet connection until `TELNETD` is run from CP/M.
+---
 
-The command is:
+## Building and flashing
 
-```text
-TELNETD.COM
-```
+### Development environment
 
-Run it with no parameter to use the normal Telnet port 23:
+The project uses:
 
-```text
-C0>TELNETD
-```
+- Visual Studio Code
+- PlatformIO
+- Arduino framework for ESP32-S3
 
-or supply a different TCP port:
+The PlatformIO environment is:
 
 ```text
-C0>TELNETD 2323
+m5stack-cardputer
 ```
 
-Valid ports are 1 through 65535.
+Dependencies are defined in `platformio.ini`.
 
-Running `TELNETD` starts the listener and immediately places `CON:` into TELNET mode. The Cardputer display shows the listening address and port while it waits for a client.
+### Build
 
-A connection can therefore be made only while TELNETD mode is active. Before `TELNETD` is run, or after TELNETD mode has ended, there is no listening Telnet socket.
+From the VS Code terminal:
 
-Only one Telnet client is accepted. When a client connects or disconnects, the event is announced on the CP/M console together with the remote client's IPv4 address, for example:
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer
+```
+
+### Put the Cardputer Adv into upload mode
+
+1. Turn the Cardputer off.
+2. Hold **G0**.
+3. Connect USB while still holding **G0**.
+4. Release **G0**.
+5. Upload from PlatformIO.
+
+### Upload
+
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e m5stack-cardputer -t upload
+```
+
+---
+
+## RunCPM
+
+This project incorporates source derived from **RunCPM** by Mockba the Borg:
+
+https://github.com/MockbaTheBorg/RunCPM
+
+The original RunCPM copyright and MIT licence text are preserved in:
 
 ```text
-[TELNET client connected from 192.168.1.23]
-[TELNET client disconnected from 192.168.1.23]
+src/runcpm/LICENSE
 ```
 
-The Cardputer Telnet status screen also shows the connected client's IPv4 address.
+Cardputer-specific integration, console, storage and networking work are maintained in this repository.
 
-If the remote client drops the connection, TELNETD mode ends completely: `CON:` returns to LOCAL and the listening socket is closed. A new client cannot connect until `TELNETD` is run again.
+---
 
-Returning `CON:` from TELNET to LOCAL also actively closes the client connection and the listening socket. This applies whether LOCAL is selected with `LOCAL.COM` or with the physical **Fn + =** emergency key.
+## License
 
-Switching from TELNET to USB or BOTH likewise ends TELNETD mode and closes the Telnet service.
+Cardputer-CPM is distributed under the MIT License.
 
-The physical **Fn + =** key combination always forces LOCAL mode, including while TELNET owns the console.
-
-## SETDEF command search path
-
-The firmware includes a small `SETDEF.COM` utility that controls the drive search chain used by the internal CCP when loading external commands and SUB files.
-
-The default search chain is:
+See:
 
 ```text
-*,C:
+LICENSE
 ```
 
-where `*` means the current/default drive. Thus, from A: the CCP searches A: first and then the C: system drive.
-
-Display the current search chain:
+Portions derived from RunCPM remain subject to the RunCPM MIT copyright and licence notice in:
 
 ```text
-C0>SETDEF
-Drive Search Chain: *,C:
+src/runcpm/LICENSE
 ```
-
-Change the order:
-
-```text
-C0>SETDEF C:,*
-Drive Search Chain: C:,*
-```
-
-Use only the current drive:
-
-```text
-C0>SETDEF *
-Drive Search Chain: *
-```
-
-Up to four entries are supported, using drives A: through P: and `*`. Explicitly drive-qualified commands bypass the SETDEF chain.
-
-This first implementation covers the drive-search portion of CP/M Plus SETDEF. The CP/M Plus bracket options `TEMPORARY`, `ORDER`, `DISPLAY`, and `PAGE` are not implemented yet and are rejected rather than silently ignored.
-
-Place `SETDEF.COM` in `C/0` with the other system utilities.
-
-## Cold-boot PROFILE.SUB
-
-The Cardputer uses `C/0/PROFILE.SUB` as its startup profile.
-
-If that file exists, it is executed automatically once on a cold boot, exactly as though the user had typed:
-
-```text
-C0>C:PROFILE
-```
-
-The normal CCP `.SUB` handling then invokes `SUBMIT.COM`.
-
-`PROFILE.SUB` is **not** run again on ordinary warm boots after programs exit. Rebooting or resetting the Cardputer starts a new cold boot and runs the profile again.
-
-The previous `AUTOEXEC.TXT` startup mechanism has been removed.
-
-A sample `PROFILE.SUB.EXAMPLE` is included in the repository. Copy it to:
-
-```text
-C/0/PROFILE.SUB
-```
-
-and edit it as required.
-
-## Removable A: and B: media
-
-CP/M drives **A:** and **B:** are removable-media slots backed by directories below `MEDIA/` on the SD card. Drives **C:** through **P:** keep their normal fixed RunCPM directory layout.
-
-Both removable slots start empty after power-up. Example SD-card layout:
-
-```text
-MEDIA/
-    WORDSTAR/
-        0/
-            WS.COM
-            ...
-    BASIC/
-        0/
-            ...
-    GAMES/
-        0/
-            ...
-```
-
-Each directory directly below `MEDIA/` represents one removable disk. Inside it, RunCPM user areas use the usual hexadecimal subdirectories `0` through `F`. User area `0` is created automatically when a medium is first mounted if it does not already exist.
-
-Media control is deliberately **physical-device-only**:
-
-```text
-Fn+A    manage drive A:
-Fn+B    manage drive B:
-```
-
-If the selected drive is empty, the Cardputer LCD shows the directories available in `MEDIA/`. Use the Cardputer cursor keys to choose a directory and **Enter** to mount it; Escape or Backspace cancels.
-
-If media is already mounted, **Fn+A** or **Fn+B** shows an eject confirmation before removing it.
-
-USB and Telnet users can read and write whichever A:/B: media is already mounted, but there is no USB, Telnet, CP/M command, or BDOS interface for inserting or ejecting media. Only the physical Cardputer keyboard can change the media.
-
-Mounting or ejecting invalidates RunCPM's cached login/read-only state for that drive so the next access sees the new media.
-
-This implementation supports **directory-backed media only**. Files with a `.DSK` extension are ignored by the chooser for now.
-
-Stock CP/M 2.2 `SUBMIT.COM` normally creates `A:$$$.SUB`. The firmware redirects only that legacy temporary file to the fixed C: system drive internally, so SUBMIT and `PROFILE.SUB` continue to work even when A: is empty or contains removable media.
-
-## Boot splash and WiFi skip
-
-If a file named `SPLASH.PNG` is present in the root of the SD card, the Cardputer displays it at the start of a successful boot and waits for a **physical Cardputer keypress** before continuing.
-
-For the best result, use a PNG sized for the Cardputer display:
-
-```text
-240 x 135 pixels
-```
-
-The splash is read from:
-
-```text
-/SPLASH.PNG
-```
-
-If the file is missing, unreadable, cannot fit in available memory, or cannot be decoded as PNG, boot continues normally without stopping.
-
-After the splash is dismissed, normal boot text is displayed and WiFi connection attempts begin. While the firmware is trying the networks listed in `WIFI.CFG`, pressing **any physical Cardputer key** immediately skips the remaining WiFi attempts and continues booting offline.
-
-The splash-dismiss key is fully consumed before WiFi begins, so dismissing the splash does not also skip WiFi. Likewise, a WiFi-skip keypress is consumed and is not passed on to CP/M.
-
-USB and Telnet input cannot dismiss the splash or skip WiFi; these are physical-device boot controls.
-
