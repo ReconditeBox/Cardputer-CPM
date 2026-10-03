@@ -321,45 +321,41 @@ Changes are written to the matching numbered entry in `/WIFI.CFG` and WiFi is re
 
 `IFCONFIG DHCP` removes the active entry's `IPn`, `MASKn`, `GWn` and `DNSn` lines, restoring normal DHCP on this and subsequent boots.
 
-`IFCONFIG` is deliberately unavailable when CP/M `CON:` is routed to TELNET. Network administration must be performed from LOCAL, USB, or BOTH console mode.
+`IFCONFIG` is deliberately unavailable while TELNETD mode is active. Network administration must be performed from LOCAL, USB, or BOTH console mode.
 
-A bare `IFCONFIG` may still display the current status while a Telnet client is connected but does not own `CON:`. However, `IFCONFIG DHCP` and static-address changes are refused while **any** Telnet client connection is active. Disconnect the client first, then change the network settings.
+Because the Telnet listener exists only in TELNETD mode, a connected Telnet client always means `IFCONFIG` is unavailable. Disconnect or return to LOCAL first, then inspect or change the network settings.
 
 If WiFi is offline, bare `IFCONFIG` reports that state. Address changes require a currently connected network so the firmware knows which numbered `WIFI.CFG` entry to update.
 
 ## Telnet console
 
-When WiFi connects successfully, the Cardputer starts a Telnet server on TCP port 23.
+WiFi connection by itself does **not** open a Telnet listener. The Cardputer accepts no incoming Telnet connection until `TELNETD` is run from CP/M.
 
-A fourth CP/M console-routing command is provided:
+The command is:
 
 ```text
 TELNETD.COM
 ```
 
-This uses the same ESP32-specific BDOS hook as `LOCAL.COM`, `USB.COM`, and `BOTH.COM`.
-
-Console modes are:
+Run it with no parameter to use the normal Telnet port 23:
 
 ```text
-LOCAL   Cardputer screen and keyboard
-USB     USB CDC terminal
-BOTH    Cardputer + USB CDC
-TELNET  TCP/IP Telnet terminal on port 23
+C0>TELNETD
 ```
 
-To use it:
+or supply a different TCP port:
 
-1. Boot the Cardputer with a valid `WIFI.CFG`.
-2. Note the IP address printed during startup.
-3. Copy `TELNETD.COM` to a CP/M drive on the SD card, alongside the other console-switch commands.
-4. From another machine on the same network, open a Telnet client to the Cardputer IP address on port 23.
-5. At the Cardputer CP/M prompt, run `TELNETD`.
-6. CP/M `CON:` is then routed to the Telnet client.
+```text
+C0>TELNETD 2323
+```
 
-Only one Telnet client is accepted at a time.
+Valid ports are 1 through 65535.
 
-When a Telnet client connects or disconnects, the event is announced on the CP/M console together with the remote client's IPv4 address, for example:
+Running `TELNETD` starts the listener and immediately places `CON:` into TELNET mode. The Cardputer display shows the listening address and port while it waits for a client.
+
+A connection can therefore be made only while TELNETD mode is active. Before `TELNETD` is run, or after TELNETD mode has ended, there is no listening Telnet socket.
+
+Only one Telnet client is accepted. When a client connects or disconnects, the event is announced on the CP/M console together with the remote client's IPv4 address, for example:
 
 ```text
 [TELNET client connected from 192.168.1.23]
@@ -368,9 +364,11 @@ When a Telnet client connects or disconnects, the event is announced on the CP/M
 
 The Cardputer Telnet status screen also shows the connected client's IPv4 address.
 
-If the Telnet client disconnects while it owns `CON:`, the firmware automatically returns to LOCAL mode and announces the disconnect locally with the client's address.
+If the remote client drops the connection, TELNETD mode ends completely: `CON:` returns to LOCAL and the listening socket is closed. A new client cannot connect until `TELNETD` is run again.
 
-Returning `CON:` from TELNET to LOCAL also actively closes the Telnet client connection. This applies whether LOCAL is selected with `LOCAL.COM` or with the physical **Fn + =** emergency key.
+Returning `CON:` from TELNET to LOCAL also actively closes the client connection and the listening socket. This applies whether LOCAL is selected with `LOCAL.COM` or with the physical **Fn + =** emergency key.
+
+Switching from TELNET to USB or BOTH likewise ends TELNETD mode and closes the Telnet service.
 
 The physical **Fn + =** key combination always forces LOCAL mode, including while TELNET owns the console.
 
