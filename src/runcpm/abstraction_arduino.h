@@ -67,7 +67,185 @@ typedef struct {
     uint8 al[16];
 } CPM_DIRENTRY;
 
+/*
+ * CP/M persistent file attributes.
+ *
+ * CP/M stores these in the high bits of T1/T2/T3:
+ *   T1' = read-only
+ *   T2' = system
+ *   T3' = archived (unchanged since backup)
+ *
+ * FAT provides matching read-only/system bits. FAT's archive bit has
+ * the opposite sense: set means "changed since backup", so CP/M T3'
+ * maps to a CLEAR FAT archive bit.
+ */
+#define CPM_FILE_ATTR_READ_ONLY 0x01
+#define CPM_FILE_ATTR_SYSTEM    0x02
+#define CPM_FILE_ATTR_ARCHIVED  0x04
+
 static DirFat_t fileDirEntry;
+
+
+static uint8 _sysFatToCpmAttributes(
+    uint8 fatAttributes
+)
+{
+    uint8 attributes =
+        0;
+
+    if (fatAttributes & FS_ATTRIB_READ_ONLY) {
+        attributes |= CPM_FILE_ATTR_READ_ONLY;
+    }
+
+    if (fatAttributes & FS_ATTRIB_SYSTEM) {
+        attributes |= CPM_FILE_ATTR_SYSTEM;
+    }
+
+    if (!(fatAttributes & FS_ATTRIB_ARCHIVE)) {
+        attributes |= CPM_FILE_ATTR_ARCHIVED;
+    }
+
+    return attributes;
+}
+
+
+static void _sysApplyFatAttributesToFCB(
+    uint16 fcbaddr,
+    uint8 fatAttributes
+)
+{
+    CPM_FCB *F =
+        (CPM_FCB *)_RamSysAddr(
+            fcbaddr
+        );
+
+    uint8 attributes =
+        _sysFatToCpmAttributes(
+            fatAttributes
+        );
+
+    F->tp[0] &= 0x7F;
+    F->tp[1] &= 0x7F;
+    F->tp[2] &= 0x7F;
+
+    if (attributes & CPM_FILE_ATTR_READ_ONLY) {
+        F->tp[0] |= 0x80;
+    }
+
+    if (attributes & CPM_FILE_ATTR_SYSTEM) {
+        F->tp[1] |= 0x80;
+    }
+
+    if (attributes & CPM_FILE_ATTR_ARCHIVED) {
+        F->tp[2] |= 0x80;
+    }
+}
+
+
+uint8 _sys_getfileattributes(
+    uint8 *filename
+)
+{
+    File f =
+        SD.open(
+            (char *)filename,
+            O_READ
+        );
+
+    if (!f) {
+        return 0;
+    }
+
+    int fatAttributes =
+        f.attrib();
+
+    f.close();
+
+    if (fatAttributes < 0) {
+        return 0;
+    }
+
+    return _sysFatToCpmAttributes(
+        (uint8)fatAttributes
+    );
+}
+
+
+uint8 _sys_isreadonly(
+    uint8 *filename
+)
+{
+    return (
+        _sys_getfileattributes(
+            filename
+        ) &
+        CPM_FILE_ATTR_READ_ONLY
+    )
+        ? TRUE
+        : FALSE;
+}
+
+
+int _sys_setfileattributes(
+    uint8 *filename,
+    uint8 cpmAttributes
+)
+{
+    File f =
+        SD.open(
+            (char *)filename,
+            O_READ
+        );
+
+    if (!f) {
+        return FALSE;
+    }
+
+    int current =
+        f.attrib();
+
+    if (current < 0) {
+        f.close();
+        return FALSE;
+    }
+
+    uint8 fatAttributes =
+        (uint8)current;
+
+    if (cpmAttributes & CPM_FILE_ATTR_READ_ONLY) {
+        fatAttributes |= FS_ATTRIB_READ_ONLY;
+    } else {
+        fatAttributes &= (uint8)~FS_ATTRIB_READ_ONLY;
+    }
+
+    if (cpmAttributes & CPM_FILE_ATTR_SYSTEM) {
+        fatAttributes |= FS_ATTRIB_SYSTEM;
+    } else {
+        fatAttributes &= (uint8)~FS_ATTRIB_SYSTEM;
+    }
+
+    /*
+     * Inverse archive sense:
+     * CP/M archived=1 means unchanged since backup.
+     * FAT archive=1 means changed since backup.
+     */
+    if (cpmAttributes & CPM_FILE_ATTR_ARCHIVED) {
+        fatAttributes &= (uint8)~FS_ATTRIB_ARCHIVE;
+    } else {
+        fatAttributes |= FS_ATTRIB_ARCHIVE;
+    }
+
+    bool okay =
+        f.attrib(
+            fatAttributes
+        );
+
+    f.close();
+
+    return okay
+        ? TRUE
+        : FALSE;
+}
 
 #ifdef board_cardputer_removable_media
 
@@ -348,13 +526,10 @@ long _sys_filesize(uint8 *filename) {
 }
 
 #ifdef CPM3
-// Host file date stamps / attributes are not tracked on the Arduino SD backend.
-// Returning 0 makes F_TIMEDATE report "no stamp" and files appear read/write.
+// Host file date stamps are not currently tracked on the Arduino SD backend.
+// Returning 0 makes F_TIMEDATE report "no stamp". File read-only state is
+// handled by the persistent FAT/CP-M attribute bridge above.
 unsigned long _sys_filemtime(uint8 *filename) {
-    return (0);
-}
-
-uint8 _sys_isreadonly(uint8 *filename) {
     return (0);
 }
 
@@ -394,24 +569,52 @@ int _sys_makefile(uint8 *filename) {
 }
 
 int _sys_deletefile(uint8 *filename) {
+    if (_sys_isreadonly(filename)) {
+        return 0;
+    }
+
     digitalWrite(LED, HIGH ^ LEDinv);
-    return (SD.remove((char *)filename));
+
+    int result =
+        SD.remove(
+            (char *)filename
+        );
+
     digitalWrite(LED, LOW ^ LEDinv);
+
+    return result;
 }
 
 int _sys_renamefile(uint8 *filename, uint8 *newname) {
     File f;
     int result = 0;
 
+    if (_sys_isreadonly(filename)) {
+        return 0;
+    }
+
     digitalWrite(LED, HIGH ^ LEDinv);
-    f = SD.open((char *)filename, O_WRITE | O_APPEND);
+
+    f =
+        SD.open(
+            (char *)filename,
+            O_READ
+        );
+
     if (f) {
-        if (f.rename((char *)newname)) {
-            f.close();
+        if (
+            f.rename(
+                (char *)newname
+            )
+        ) {
             result = 1;
         }
+
+        f.close();
     }
+
     digitalWrite(LED, LOW ^ LEDinv);
+
     return (result);
 }
 
@@ -625,6 +828,12 @@ uint8 _findnext(uint8 isdir) {
                 _RamWrite(tmpFCB, filename[0] - '@');
 #endif
                 _HostnameToFCB(tmpFCB, findNextDirName);
+
+                _sysApplyFatAttributesToFCB(
+                    tmpFCB,
+                    fileDirEntry.attributes
+                );
+
                 result = 0x00;
                 break;
             }
