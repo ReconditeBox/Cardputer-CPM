@@ -1547,10 +1547,11 @@ void _Bdos(void) {
     }
 
     /*
-       C = 30 (1Eh) : Set file attributes (does nothing)
+       C = 30 (1Eh) : Set file attributes
+       T1' = read-only, T2' = system, T3' = archived
      */
     case F_ATTRIB: {
-        HL = 0;
+        HL = _SetFileAttributes(DE);
         break;
     }
 
