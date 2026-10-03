@@ -2067,6 +2067,8 @@ static void browserHelp()
         "number       follow numbered link\r\n"
         "B            back\r\n"
         "G url        go to URL\r\n"
+        "BROWSE url   go to URL\r\n"
+        "http://...   go directly to URL\r\n"
         "R            reload\r\n"
         "L            list links and URLs\r\n"
         "H or ?       help\r\n"
@@ -2381,25 +2383,57 @@ uint16 cardputerBrowserBdos(
             continue;
         }
 
+        bool browseCommand =
+            strncasecmp(
+                text,
+                "BROWSE",
+                6
+            ) == 0 &&
+            isspace(
+                (unsigned char)text[6]
+            );
+
+        bool directUrl =
+            strncasecmp(
+                text,
+                "http://",
+                7
+            ) == 0 ||
+            strncasecmp(
+                text,
+                "https://",
+                8
+            ) == 0;
+
         if (
             (
-                text[0] == 'G' ||
-                text[0] == 'g'
-            ) &&
-            isspace(
-                (unsigned char)text[1]
-            )
+                (
+                    text[0] == 'G' ||
+                    text[0] == 'g'
+                ) &&
+                isspace(
+                    (unsigned char)text[1]
+                )
+            ) ||
+            browseCommand ||
+            directUrl
         )
         {
             char *url =
-                wifiTrim(
-                    text + 2
-                );
+                directUrl
+                    ? text
+                    : browseCommand
+                        ? wifiTrim(
+                            text + 6
+                          )
+                        : wifiTrim(
+                            text + 2
+                          );
 
             if (!url[0])
             {
                 _puts(
-                    "Usage: G http://...\r\n"
+                    "Usage: G url, BROWSE url, or http://...\r\n"
                 );
 
                 continue;
@@ -2488,7 +2522,7 @@ uint16 cardputerBrowserBdos(
         }
 
         _puts(
-            "BROWSE: number, B, G url, R, L, H, Q\r\n"
+            "BROWSE: number, URL, BROWSE url, B, G url, R, L, H, Q\r\n"
         );
     }
 
