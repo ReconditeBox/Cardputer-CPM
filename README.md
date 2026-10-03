@@ -26,6 +26,10 @@ Current functionality includes:
 - foreground Telnet server with `TELNETD`
 - foreground anonymous FTP server with `FTPD`
 - live ESP32 memory reporting with `MEM`
+- CP/M character devices `LST:`, `RDR:` and `PUN:`
+- EXT-header auxiliary UART at 115200 8N1
+- built-in `AUX` routing command
+- built-in `BATTERY` status command
 - optional PNG boot splash
 - physical key to skip WiFi connection attempts
 - physical **Fn + =** emergency return to LOCAL mode
@@ -49,7 +53,18 @@ The SD interface uses:
 | MOSI | 14 |
 | CS | 12 |
 
+The Cardputer Adv EXT header also provides the auxiliary serial interface used by Cardputer-CPM:
+
+| Signal | GPIO |
+| --- | ---: |
+| AUX TX | 13 |
+| AUX RX | 15 |
+
+The AUX UART runs at **115200 baud, 8 data bits, no parity, 1 stop bit**.
+
 ---
+
+
 
 ## Quick start
 
@@ -151,7 +166,7 @@ The internal CCP's default command search chain is:
 
 so an unqualified external command is searched for on the current drive first and then on C:.
 
-`PROFILE.SUB`, SUBMIT support, and the PUN:/LST: host files also use C: as the system drive.
+`PROFILE.SUB`, SUBMIT support, and the RDR:/PUN:/LST: host files also use C: as the system drive.
 
 ### Fixed drives
 
@@ -352,6 +367,76 @@ no flow control
 ```
 
 Close any other application that already has the Cardputer COM port open before starting a terminal emulator.
+
+---
+
+## CP/M character devices
+
+Cardputer-CPM provides the classic CP/M character devices:
+
+| Device | Cardputer-CPM backing |
+| --- | --- |
+| `CON:` | Cardputer/USB/Telnet console router |
+| `LST:` | `C/0/LST.TXT` |
+| `RDR:` | `C/0/RDR.TXT` by default |
+| `PUN:` | `C/0/PUN.TXT` by default |
+
+The file-backed `RDR:` and `PUN:` devices remain the default after boot.
+
+### AUX UART
+
+The Cardputer Adv EXT header exposes a bidirectional UART:
+
+```text
+TX  GPIO13
+RX  GPIO15
+115200 8N1
+```
+
+Cardputer-CPM maps the CP/M `TTY:` reader/punch selection to this UART.
+
+The built-in CCP command:
+
+```text
+C0>AUX
+```
+
+shows the current routing.
+
+Route both CP/M reader and punch traffic to the UART:
+
+```text
+C0>AUX ON
+```
+
+Return them to the file-backed devices:
+
+```text
+C0>AUX OFF
+```
+
+`AUX ON` changes only the RDR/PUN fields of the CP/M IOBYTE; the `CON:` and `LST:` assignments are preserved.
+
+Software that changes the CP/M IOBYTE directly can also select `TTY:` for RDR/PUN to reach the UART.
+
+### BATTERY
+
+`BATTERY` is a built-in CCP command:
+
+```text
+C0>BATTERY
+```
+
+It reports the Cardputer battery level and measured battery voltage, for example:
+
+```text
+Battery
+-------
+Level:   83%
+Voltage: 4012 mV (4.012 V)
+```
+
+Charging state/current are not reported because the Cardputer hardware does not provide reliable charging-status/current readings through the M5Stack power API.
 
 ---
 
