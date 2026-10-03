@@ -157,11 +157,11 @@ static void ftpShowStatus()
     );
 
     M5Cardputer.Display.println(
-        "CP/M FTP SERVER"
+        "FTPD"
     );
 
     M5Cardputer.Display.println(
-        "--------------"
+        "----"
     );
 
     M5Cardputer.Display.println();
@@ -170,7 +170,7 @@ static void ftpShowStatus()
         WiFi.localIP();
 
     M5Cardputer.Display.printf(
-        "%u.%u.%u.%u:%u\n",
+        "Listen: %u.%u.%u.%u:%u\n",
         ip[0],
         ip[1],
         ip[2],
@@ -179,11 +179,9 @@ static void ftpShowStatus()
     );
 
     M5Cardputer.Display.printf(
-        "Drive: F:  User: %u\n",
+        "Drive:  F:   User: %u\n",
         ftpCurrentUser
     );
-
-    M5Cardputer.Display.println();
 
     if (
         ftpControlClient &&
@@ -191,7 +189,7 @@ static void ftpShowStatus()
     )
     {
         M5Cardputer.Display.println(
-            "FTP client connected"
+            "State:  connected"
         );
 
         if (ftpRemoteIPValid)
@@ -208,7 +206,7 @@ static void ftpShowStatus()
     else
     {
         M5Cardputer.Display.println(
-            "Waiting for client..."
+            "State:  waiting"
         );
     }
 
@@ -221,7 +219,7 @@ static void ftpShowStatus()
     M5Cardputer.Display.println();
 
     M5Cardputer.Display.println(
-        "Fn+= = LOCAL"
+        "Fn+=  LOCAL"
     );
 }
 
