@@ -730,7 +730,7 @@ Outbound `FTP` may run while TELNETD is active. It is unavailable while the loca
 
 ### BROWSE
 
-`BROWSE.COM` is a deliberately small text-mode web browser inspired by Lynx:
+`BROWSE.COM` is a small interactive text-mode web browser with a Lynx-style terminal interface:
 
 ```text
 C0>BROWSE https://example.com/
@@ -743,25 +743,36 @@ C0>BROWSE
 URL:
 ```
 
-HTML is rendered as wrapped text sized for the Cardputer's local viewport. Pages are cached to a temporary SD file before display, then shown with a built-in `--More--` pager so reading slowly cannot stall the HTTP connection. Links are shown inline with numbers such as `[1]`, `[2]` and so on. Press **Enter** at `--More--` to continue or **Q** to stop displaying the rest of the page while still collecting its links.
+Pages are fetched completely to a temporary SD file, parsed into a local text-page model, then displayed through the existing VT100 console. The Cardputer view uses a **38-column by 14-line content viewport**, leaving the bottom two rows for browser status and controls.
 
-At the browser prompt:
+Links are displayed as ordinary text. The currently selected link is shown in **reverse video** rather than with link numbers.
+
+Navigation follows the familiar Lynx model:
 
 ```text
-browse> 3                     follow link 3
-browse> B                     back
-browse> G https://...         go to URL
-browse> BROWSE https://...    go to URL
-browse> https://...           go directly to URL
-browse> R                     reload
-browse> L                     list links and full URLs
-browse> H                     help
-browse> Q                     quit
+Up / Down       previous / next link
+Right / Enter   follow selected link
+Left / Backspace
+                go back
+Space / PgDn    page down
+- / PgUp        page up
+Home / End      top / bottom
+
+G               enter a URL
+R               reload
+D               download selected link
+L               show selected link URL
+H or ?          help
+Q               quit
 ```
 
-Relative HTTP/HTTPS links are resolved against the current page. Up to 64 links are retained per page and eight pages of back history are kept.
+The local Cardputer cursor keys are the normal **Fn + arrow** keys. The same VT100 controls also work through USB and TELNETD.
 
-The browser handles ordinary server-rendered HTML and plain text. It strips tags, ignores CSS and JavaScript, and does **not** execute client-side applications. Modern sites that require JavaScript will therefore be incomplete or unusable, as expected for a simple CP/M text browser.
+`D` passes the selected HTTP/HTTPS link to the existing WGET download path and prompts for an optional CP/M 8.3 destination filename.
+
+Relative HTTP/HTTPS links are resolved against the current page. Up to 64 selectable links are retained per page, up to 384 rendered text lines are kept, and eight pages of back history are available.
+
+The browser handles ordinary server-rendered HTML and plain text, including headings, paragraphs, lists, links, basic preformatted text, image ALT text and common HTML entities. It ignores CSS and JavaScript and does **not** execute client-side applications. Modern sites that require JavaScript will therefore be incomplete or unusable, as expected for a CP/M-style text browser.
 
 HTTP and HTTPS are supported. As with WGET, HTTPS traffic is encrypted but certificate identity is not yet validated because the firmware does not currently carry a CA bundle.
 
