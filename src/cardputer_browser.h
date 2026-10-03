@@ -202,6 +202,13 @@ static void browserFlushWord(
         browserEmitNewline(
             parser
         );
+
+        if (parser.pagerStopped)
+        {
+            parser.wordLength = 0;
+            parser.pendingSpace = false;
+            return;
+        }
     }
 
     for (
@@ -274,12 +281,9 @@ static void browserNewline(
         !parser.pagerStopped
     )
     {
-        _puts(
-            "\r\n"
+        browserEmitNewline(
+            parser
         );
-
-        parser.column =
-            0;
     }
 }
 
