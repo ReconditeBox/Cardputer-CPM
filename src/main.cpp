@@ -7022,23 +7022,6 @@ uint16 cardputerTelnetBdos(
         return 0x00FF;
     }
 
-    if (
-        cardConsoleMode ==
-            CARD_CONSOLE_TELNET ||
-        telnetServerStarted ||
-        (
-            telnetClient &&
-            telnetClient.connected()
-        )
-    )
-    {
-        _puts(
-            "\r\nTELNET: unavailable while TELNETD is active\r\n"
-        );
-
-        return 0x00FF;
-    }
-
     char buffer[129];
 
     if (!networkReadCommandTail(
