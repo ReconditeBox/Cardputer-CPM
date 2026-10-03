@@ -292,6 +292,7 @@ uint8 _ccp_dir(void) {
     uint8 dirHead[6] = "A: ";
     uint8 dirSep[6] = "  |  ";
     uint32 ccount = 0; // Number of columns printed
+    bool listed = false;
 
     if (_RamRead(ParFCB + 1) == ' ')
         for (i = 1; i < 12; ++i)
@@ -299,26 +300,36 @@ uint8 _ccp_dir(void) {
     dirHead[0] = _RamRead(ParFCB) ? _RamRead(ParFCB) + '@' : prompt[2];
 
     _puts("\r\n");
-    if (!_SearchFirst(ParFCB, TRUE)) {
-        _puts((char *)dirHead);
-        _ccp_printfcb(tmpFCB, FALSE);
-        ++ccount;
 
-        while (!_SearchNext(ParFCB, TRUE)) {
-            if (!ccount) {
-                _puts("\r\n");
-                _puts((char *)dirHead);
-            } else {
-                _puts((char *)dirSep);
+    if (!_SearchFirst(ParFCB, TRUE)) {
+        do {
+            /*
+             * CP/M T2' marks a SYS file. Standard DIR omits SYS files;
+             * STAT/explicit searches can still see and manipulate them.
+             */
+            if (!(_RamRead(tmpFCB + 10) & 0x80)) {
+                if (!listed || !ccount) {
+                    if (listed)
+                        _puts("\r\n");
+                    _puts((char *)dirHead);
+                } else {
+                    _puts((char *)dirSep);
+                }
+
+                _ccp_printfcb(tmpFCB, FALSE);
+
+                listed = true;
+                ++ccount;
+
+                if (ccount > 3)
+                    ccount = 0;
             }
-            _ccp_printfcb(tmpFCB, FALSE);
-            ++ccount;
-            if (ccount > 3)
-                ccount = 0;
-        }
-    } else {
-        _puts("No file");
+        } while (!_SearchNext(ParFCB, TRUE));
     }
+
+    if (!listed)
+        _puts("No file");
+
     return 0;
 } // _ccp_dir
 
