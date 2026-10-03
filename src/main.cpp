@@ -1361,6 +1361,10 @@ static void showTelnetStatus()
     M5Cardputer.Display.println(
         "Fn+=  LOCAL"
     );
+
+    M5Cardputer.Display.println(
+        "G0    FTPD"
+    );
 }
 
 
@@ -5759,7 +5763,12 @@ uint16 cardputerFtpdBdos()
     /*
      * FTPD is a foreground service, like TELNETD is a dedicated
      * operating mode. Do not return to the CP/M prompt while the
-     * daemon is active. The only local escape is physical Fn+=.
+     * daemon is active.
+     *
+     * Physical Fn+= is the emergency LOCAL escape.
+     * Physical G0 is the normal mode-cycle button and advances:
+     *
+     *   FTPD -> LOCAL
      *
      * Unlike TELNETD, an FTP client disconnect does not terminate
      * the daemon; ftpService() returns to listening for the next client.
@@ -5768,24 +5777,39 @@ uint16 cardputerFtpdBdos()
     {
         ftpService();
 
-        M5Cardputer.update();
-
-        Keyboard_Class::KeysState status =
-            M5Cardputer.Keyboard.keysState();
-
-        if (
-            status.fn &&
-            status.f12
-        )
+        if (ftpPhysicalStopRequested())
         {
+            bool stoppedByG0 =
+                ftpG0StopRequested;
+
             ftpStop();
 
-            cardputerWaitForAllKeysReleased();
+            if (!stoppedByG0)
+            {
+                cardputerWaitForAllKeysReleased();
+            }
 
             break;
         }
 
         delay(2);
+    }
+
+    bool stoppedByG0 =
+        ftpG0StopRequested;
+
+    ftpG0StopRequested =
+        false;
+
+    if (stoppedByG0)
+    {
+        setCardConsoleMode(
+            CARD_CONSOLE_LOCAL
+        );
+
+        _puts(
+            "\r\n[G0: LOCAL]\r\n"
+        );
     }
 
     terminalRenderAll(
