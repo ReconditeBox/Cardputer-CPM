@@ -2010,11 +2010,22 @@ void _ccp(void) {
              * external command.
              */
             bool preserveTailCase =
-                _RamRead(CmdFCB + 1) == 'W' &&
-                _RamRead(CmdFCB + 2) == 'G' &&
-                _RamRead(CmdFCB + 3) == 'E' &&
-                _RamRead(CmdFCB + 4) == 'T' &&
-                _RamRead(CmdFCB + 5) == ' ';
+                (
+                    _RamRead(CmdFCB + 1) == 'W' &&
+                    _RamRead(CmdFCB + 2) == 'G' &&
+                    _RamRead(CmdFCB + 3) == 'E' &&
+                    _RamRead(CmdFCB + 4) == 'T' &&
+                    _RamRead(CmdFCB + 5) == ' '
+                ) ||
+                (
+                    _RamRead(CmdFCB + 1) == 'B' &&
+                    _RamRead(CmdFCB + 2) == 'R' &&
+                    _RamRead(CmdFCB + 3) == 'O' &&
+                    _RamRead(CmdFCB + 4) == 'W' &&
+                    _RamRead(CmdFCB + 5) == 'S' &&
+                    _RamRead(CmdFCB + 6) == 'E' &&
+                    _RamRead(CmdFCB + 7) == ' '
+                );
 
             for (i = 0; i < bufferLen; ++i) {
                 uint8 tailCharacter =
