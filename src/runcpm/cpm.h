@@ -2292,6 +2292,39 @@ void _Bdos(void) {
     }
 #endif
 
+#if defined board_cardputer_dns
+    /*
+       C = 239 (EFh) : Cardputer DNS command
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 239: {
+        HL = cardputerDnsBdos(DE);
+        break;
+    }
+#endif
+
+#if defined board_cardputer_ping
+    /*
+       C = 240 (F0h) : Cardputer PING command
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 240: {
+        HL = cardputerPingBdos(DE);
+        break;
+    }
+#endif
+
+#if defined board_cardputer_telnet
+    /*
+       C = 241 (F1h) : Cardputer outbound TELNET command
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 241: {
+        HL = cardputerTelnetBdos(DE);
+        break;
+    }
+#endif
+
     /*
        C = 248 (F8h) : Milliseconds Uptime
        Returns the number of milliseconds (since the board started).
