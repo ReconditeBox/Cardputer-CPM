@@ -1046,24 +1046,42 @@ static bool ftpClientPut(
             break;
         }
 
-        size_t sent =
-            data.write(
-                buffer,
-                (size_t)got
-            );
+        size_t sentTotal =
+            0;
 
-        if (
-            sent !=
-            (size_t)got
+        while (
+            sentTotal <
+                (size_t)got
         )
         {
-            _puts(
-                "FTP: data send failed\r\n"
-            );
+            size_t sent =
+                data.write(
+                    buffer +
+                        sentTotal,
+                    (size_t)got -
+                        sentTotal
+                );
 
-            okay =
-                false;
+            if (sent == 0)
+            {
+                _puts(
+                    "FTP: data send failed\r\n"
+                );
 
+                okay =
+                    false;
+
+                break;
+            }
+
+            sentTotal +=
+                sent;
+
+            delay(0);
+        }
+
+        if (!okay)
+        {
             break;
         }
 
@@ -1707,17 +1725,6 @@ uint16 cardputerFtpClientBdos(
             )
         )
         {
-            const char *raw =
-                commandText +
-                strlen(parts[0]);
-
-            while (
-                *raw == 0
-            )
-            {
-                raw++;
-            }
-
             if (partCount < 2)
             {
                 _puts(
