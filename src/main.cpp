@@ -1397,19 +1397,25 @@ static void setCardConsoleMode(
     }
 
 
-    if (
+    bool closeTelnetClient =
         mode == CARD_CONSOLE_LOCAL &&
         previousMode ==
             CARD_CONSOLE_TELNET &&
         telnetClient &&
-        telnetClient.connected()
-    )
+        telnetClient.connected();
+
+    if (closeTelnetClient)
     {
         telnetClient.print(
             "\r\n"
             "[Switching to LOCAL console]"
             "\r\n"
         );
+
+        telnetClient.flush();
+        delay(10);
+        telnetClient.stop();
+        telnetResetInputState();
     }
 
 
@@ -1422,6 +1428,15 @@ static void setCardConsoleMode(
     )
     {
         terminalRenderAll(true);
+
+        if (closeTelnetClient)
+        {
+            _puts(
+                "\r\n"
+                "[TELNET client disconnected]"
+                "\r\n"
+            );
+        }
     }
     else if (
         cardConsoleMode ==
@@ -2864,10 +2879,16 @@ static void telnetClientConnected()
     else
     {
         telnetClient.print(
-            "Connected. Run TELNET.COM on the Cardputer "
+            "Connected. Run TELNETD.COM on the Cardputer "
             "to route CP/M CON: here.\r\n"
         );
     }
+
+    _puts(
+        "\r\n"
+        "[TELNET client connected]"
+        "\r\n"
+    );
 }
 
 
@@ -2916,19 +2937,26 @@ static void telnetServiceConnection()
         !telnetClient.connected()
     )
     {
+        bool wasTelnetConsole =
+            cardConsoleMode ==
+            CARD_CONSOLE_TELNET;
+
         telnetClient.stop();
 
         telnetResetInputState();
 
-        if (
-            cardConsoleMode ==
-            CARD_CONSOLE_TELNET
-        )
+        if (wasTelnetConsole)
         {
             setCardConsoleMode(
                 CARD_CONSOLE_LOCAL
             );
         }
+
+        _puts(
+            "\r\n"
+            "[TELNET client disconnected]"
+            "\r\n"
+        );
     }
 }
 
@@ -4758,24 +4786,10 @@ static bool wifiWriteAddressConfig(
 
 static void wifiStopTelnetForReconnect()
 {
-    if (
-        cardConsoleMode ==
-        CARD_CONSOLE_TELNET
-    )
-    {
-        setCardConsoleMode(
-            CARD_CONSOLE_LOCAL
-        );
-    }
-
-    if (
-        telnetClient &&
-        telnetClient.connected()
-    )
-    {
-        telnetClient.stop();
-    }
-
+    /*
+     * IFCONFIG changes are rejected while a client is connected, so
+     * only the listening server needs to be stopped during reconnect.
+     */
     if (telnetServerStarted)
     {
         telnetServer.stop();
@@ -5019,6 +5033,25 @@ uint16 cardputerIfconfigBdos(
     uint16 commandTail
 )
 {
+    /*
+     * Network administration is deliberately unavailable from the
+     * Telnet console. A remote session must not be able to change or
+     * inspect the interface through IFCONFIG.
+     */
+    if (
+        cardConsoleMode ==
+        CARD_CONSOLE_TELNET
+    )
+    {
+        _puts(
+            "\r\n"
+            "IFCONFIG: unavailable from TELNET console"
+            "\r\n"
+        );
+
+        return 0x00FF;
+    }
+
     uint8_t length =
         _RamRead(
             commandTail
@@ -5085,6 +5118,20 @@ uint16 cardputerIfconfigBdos(
     )
     {
         wifiPrintIfconfigUsage();
+
+        return 0x00FF;
+    }
+
+    if (
+        telnetClient &&
+        telnetClient.connected()
+    )
+    {
+        _puts(
+            "\r\n"
+            "IFCONFIG: cannot change settings while a TELNET client is connected"
+            "\r\n"
+        );
 
         return 0x00FF;
     }
