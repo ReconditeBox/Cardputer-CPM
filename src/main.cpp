@@ -198,6 +198,7 @@ void _clrscr(void);
 
 static void setCardConsoleMode(uint8_t mode);
 static void telnetResetInputState();
+static void telnetFormatRemoteIP(char *buffer, size_t bufferSize);
 
 
 /*
