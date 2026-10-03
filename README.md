@@ -748,13 +748,15 @@ HTML is rendered as wrapped text sized for the Cardputer's local viewport. Pages
 At the browser prompt:
 
 ```text
-browse> 3              follow link 3
-browse> B              back
-browse> G https://...  go to URL
-browse> R              reload
-browse> L              list links and full URLs
-browse> H              help
-browse> Q              quit
+browse> 3                     follow link 3
+browse> B                     back
+browse> G https://...         go to URL
+browse> BROWSE https://...    go to URL
+browse> https://...           go directly to URL
+browse> R                     reload
+browse> L                     list links and full URLs
+browse> H                     help
+browse> Q                     quit
 ```
 
 Relative HTTP/HTTPS links are resolved against the current page. Up to 64 links are retained per page and eight pages of back history are kept.
