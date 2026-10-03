@@ -74,11 +74,13 @@ static uint8_t cardConsoleMode =
  * ====================================================
  */
 
-#define TELNET_PORT 23
+#define TELNET_DEFAULT_PORT 23
 
-static WiFiServer telnetServer(
-    TELNET_PORT
-);
+static WiFiServer *telnetServer =
+    NULL;
+
+static uint16_t telnetPort =
+    TELNET_DEFAULT_PORT;
 
 static WiFiClient telnetClient;
 
@@ -1311,7 +1313,7 @@ static void showTelnetStatus()
         ip[1],
         ip[2],
         ip[3],
-        TELNET_PORT
+        telnetPort
     );
 
     M5Cardputer.Display.println();
@@ -1373,21 +1375,37 @@ static void setCardConsoleMode(
 
 
     if (
-        mode == CARD_CONSOLE_TELNET &&
-        (
-            WiFi.status() !=
-                WL_CONNECTED ||
-            !telnetServerStarted
-        )
+        mode ==
+        CARD_CONSOLE_TELNET
     )
     {
-        _puts(
-            "\r\n"
-            "[TELNET unavailable: WiFi is offline]"
-            "\r\n"
-        );
+        if (
+            WiFi.status() !=
+            WL_CONNECTED
+        )
+        {
+            _puts(
+                "\r\n"
+                "[TELNET unavailable: WiFi is offline]"
+                "\r\n"
+            );
 
-        return;
+            return;
+        }
+
+        if (
+            !telnetServerStarted ||
+            !telnetServer
+        )
+        {
+            _puts(
+                "\r\n"
+                "[TELNET unavailable: run TELNETD]"
+                "\r\n"
+            );
+
+            return;
+        }
     }
 
 
@@ -1413,10 +1431,14 @@ static void setCardConsoleMode(
     }
 
 
-    bool closeTelnetClient =
-        mode == CARD_CONSOLE_LOCAL &&
+    bool leavingTelnet =
         previousMode ==
             CARD_CONSOLE_TELNET &&
+        mode !=
+            CARD_CONSOLE_TELNET;
+
+    bool closeTelnetClient =
+        leavingTelnet &&
         telnetClient &&
         telnetClient.connected();
 
@@ -1424,7 +1446,7 @@ static void setCardConsoleMode(
     {
         telnetClient.print(
             "\r\n"
-            "[Switching to LOCAL console]"
+            "[TELNET service closed]"
             "\r\n"
         );
 
@@ -1434,6 +1456,20 @@ static void setCardConsoleMode(
         telnetClient =
             WiFiClient();
         telnetResetInputState();
+    }
+
+    if (leavingTelnet)
+    {
+        if (telnetServer)
+        {
+            telnetServer->stop();
+            delete telnetServer;
+            telnetServer =
+                NULL;
+        }
+
+        telnetServerStarted =
+            false;
     }
 
 
@@ -2983,13 +3019,18 @@ static void telnetClientConnected()
 
 static void telnetServiceConnection()
 {
-    if (!telnetServerStarted)
+    if (
+        !telnetServerStarted ||
+        !telnetServer ||
+        cardConsoleMode !=
+            CARD_CONSOLE_TELNET
+    )
     {
         return;
     }
 
     WiFiClient incoming =
-        telnetServer.available();
+        telnetServer->available();
 
     if (incoming)
     {
@@ -3042,6 +3083,11 @@ static void telnetServiceConnection()
 
         if (wasTelnetConsole)
         {
+            /*
+             * A dropped session terminates TELNETD completely.
+             * setCardConsoleMode() also closes the listening socket,
+             * so another client cannot connect until TELNETD is run again.
+             */
             setCardConsoleMode(
                 CARD_CONSOLE_LOCAL
             );
@@ -4901,9 +4947,12 @@ static void wifiStopTelnetForReconnect()
      * IFCONFIG changes are rejected while a client is connected, so
      * only the listening server needs to be stopped during reconnect.
      */
-    if (telnetServerStarted)
+    if (telnetServer)
     {
-        telnetServer.stop();
+        telnetServer->stop();
+        delete telnetServer;
+        telnetServer =
+            NULL;
     }
 
     telnetServerStarted =
@@ -5021,13 +5070,11 @@ static bool wifiReconnectEntry(
         true
     );
 
-    telnetServer.begin();
-
     telnetServerStarted =
-        true;
+        false;
 
     _puts(
-        "IFCONFIG: WiFi connected; Telnet listening on port 23\r\n"
+        "IFCONFIG: WiFi connected\r\n"
     );
 
     return true;
@@ -5638,13 +5685,11 @@ static bool wifiConnectFromConfig()
             );
 
 
-            telnetServer.begin();
-
             telnetServerStarted =
-                true;
+                false;
 
             _puts(
-                "Telnet: listening on port 23\r\n"
+                "Telnet: inactive; run TELNETD to listen\r\n"
             );
 
             return true;
