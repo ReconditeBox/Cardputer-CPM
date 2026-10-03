@@ -2,37 +2,65 @@
 #define CARDPUTER_BROWSER_H
 
 /*
- * Small Lynx-style text browser for Cardputer-CPM.
+ * Interactive Lynx-style text browser for Cardputer-CPM.
  *
  * BROWSE.COM [http://... | https://...]
  *
- * It intentionally implements the useful text-browser subset: readable HTML
- * text, numbered links, relative-link navigation, back, reload and go-to.
+ * The network fetch, HTML parser and UI all live in the Cardputer host
+ * firmware.  BROWSE.COM is only the tiny CP/M BDOS launcher.
+ *
+ * The browser intentionally targets the useful Lynx interaction model:
+ *
+ *   Up / Down       previous / next link
+ *   Right / Enter   follow selected link
+ *   Left / Backspace
+ *                   go back
+ *   Space / PgDn    page down
+ *   - / PgUp        page up
+ *   Home / End      top / bottom
+ *   G               go to URL
+ *   R               reload
+ *   D               download selected link through WGET
+ *   L               show selected link URL
+ *   H / ?           help
+ *   Q               quit
+ *
+ * Pages are fetched completely to SD before parsing/display.  This means the
+ * user may spend as long as desired reading a page without holding an HTTP
+ * socket open.
+ *
  * CSS and JavaScript are not executed.
  */
 
-#define BROWSER_URL_MAX       384
-#define BROWSER_LINK_MAX      64
-#define BROWSER_TAG_MAX       512
-#define BROWSER_WORD_MAX      96
-#define BROWSER_LINE_WIDTH    38
-#define BROWSER_HISTORY_MAX   8
-#define BROWSER_FETCH_TIMEOUT 15000
-#define BROWSER_TEMP_FILE     "/BROWSE.TMP"
+#define BROWSER_URL_MAX         384
+#define BROWSER_LINK_MAX        64
+#define BROWSER_TAG_MAX         512
+#define BROWSER_WORD_MAX        96
+#define BROWSER_LINE_WIDTH      38
+#define BROWSER_PAGE_LINES      384
+#define BROWSER_VIEW_ROWS       14
+#define BROWSER_HISTORY_MAX     8
+#define BROWSER_FETCH_TIMEOUT   15000
+#define BROWSER_TEMP_FILE       "/BROWSE.TMP"
 
 struct CardputerBrowserLink
 {
     char url[
         BROWSER_URL_MAX
     ];
+
+    uint16_t firstLine;
+    uint16_t lastLine;
 };
 
 
 /*
- * Browser session storage lives in static DRAM rather than on the Arduino
- * loop task stack.  The link table alone is ~24 KB at the current limits,
- * which is far larger than the task stack and previously caused BROWSE to
- * reset the ESP32 immediately on entry.
+ * Browser state is deliberately static.
+ *
+ * The first browser implementation placed the link table and history on the
+ * Arduino task stack, which was large enough to reset the ESP32 immediately
+ * on entry.  Keeping the large page/link/session buffers in static DRAM avoids
+ * that failure mode.
  */
 static CardputerBrowserLink browserLinks[
     BROWSER_LINK_MAX
@@ -56,329 +84,30 @@ static char browserResolved[
     BROWSER_URL_MAX
 ];
 
+static char browserPage[
+    BROWSER_PAGE_LINES
+][
+    BROWSER_LINE_WIDTH + 1
+];
 
-struct CardputerBrowserParser
-{
-    const char *baseUrl;
+static uint8_t browserPageLink[
+    BROWSER_PAGE_LINES
+][
+    BROWSER_LINE_WIDTH
+];
 
-    CardputerBrowserLink *links;
-    uint8_t linkCount;
+static uint16_t browserPageLineCount =
+    1;
 
-    bool inTag;
-    char tag[
-        BROWSER_TAG_MAX
-    ];
-    size_t tagLength;
-
-    bool inEntity;
-    char entity[20];
-    size_t entityLength;
-
-    bool skipScript;
-    bool skipStyle;
-
-    char word[
-        BROWSER_WORD_MAX
-    ];
-    size_t wordLength;
-
-    bool pendingSpace;
-    uint8_t column;
-
-    uint8_t pageLines;
-    bool pagerStopped;
-};
+static bool browserPageTruncated =
+    false;
 
 
-static void browserOutputRaw(
-    const char *text
-)
-{
-    if (!text)
-    {
-        return;
-    }
-
-    while (*text)
-    {
-        _putcon(
-            (uint8_t)*text++
-        );
-    }
-}
-
-
-static void browserNewline(
-    CardputerBrowserParser &parser
-);
-
-
-static void browserPagerAfterLine(
-    CardputerBrowserParser &parser
-)
-{
-    if (parser.pagerStopped)
-    {
-        return;
-    }
-
-    parser.pageLines++;
-
-    if (
-        parser.pageLines <
-        12
-    )
-    {
-        return;
-    }
-
-    _puts(
-        "--More-- ENTER=next Q=stop"
-    );
-
-    uint8_t ch =
-        _getcon();
-
-    _puts(
-        "\r                              \r"
-    );
-
-    parser.pageLines =
-        0;
-
-    if (
-        ch == 'q' ||
-        ch == 'Q' ||
-        ch == 0x03
-    )
-    {
-        parser.pagerStopped =
-            true;
-    }
-}
-
-
-static void browserEmitNewline(
-    CardputerBrowserParser &parser
-)
-{
-    parser.column =
-        0;
-
-    if (parser.pagerStopped)
-    {
-        return;
-    }
-
-    _puts(
-        "\r\n"
-    );
-
-    browserPagerAfterLine(
-        parser
-    );
-}
-
-
-static void browserFlushWord(
-    CardputerBrowserParser &parser
-)
-{
-    if (
-        parser.wordLength ==
-        0
-    )
-    {
-        return;
-    }
-
-    if (
-        parser.pendingSpace &&
-        parser.column
-    )
-    {
-        if (
-            parser.column +
-            1 +
-            parser.wordLength >
-                BROWSER_LINE_WIDTH
-        )
-        {
-            browserEmitNewline(
-                parser
-            );
-
-            if (parser.pagerStopped)
-            {
-                parser.wordLength = 0;
-                parser.pendingSpace = false;
-                return;
-            }
-        }
-        else
-        {
-            _putcon(' ');
-
-            parser.column++;
-        }
-    }
-    else if (
-        parser.column &&
-        parser.column +
-        parser.wordLength >
-            BROWSER_LINE_WIDTH
-    )
-    {
-        browserEmitNewline(
-            parser
-        );
-
-        if (parser.pagerStopped)
-        {
-            parser.wordLength = 0;
-            parser.pendingSpace = false;
-            return;
-        }
-    }
-
-    for (
-        size_t index = 0;
-        index < parser.wordLength;
-        index++
-    )
-    {
-        if (
-            parser.column >=
-                BROWSER_LINE_WIDTH
-        )
-        {
-            browserEmitNewline(
-                parser
-            );
-
-            if (parser.pagerStopped)
-            {
-                parser.wordLength = 0;
-                parser.pendingSpace = false;
-                return;
-            }
-        }
-
-        _putcon(
-            (uint8_t)parser.word[index]
-        );
-
-        parser.column++;
-    }
-
-    parser.wordLength =
-        0;
-
-    parser.pendingSpace =
-        false;
-}
-
-
-static void browserSpace(
-    CardputerBrowserParser &parser
-)
-{
-    browserFlushWord(
-        parser
-    );
-
-    if (parser.column)
-    {
-        parser.pendingSpace =
-            true;
-    }
-}
-
-
-static void browserNewline(
-    CardputerBrowserParser &parser
-)
-{
-    browserFlushWord(
-        parser
-    );
-
-    parser.pendingSpace =
-        false;
-
-    if (
-        parser.column &&
-        !parser.pagerStopped
-    )
-    {
-        browserEmitNewline(
-            parser
-        );
-    }
-}
-
-
-static void browserBlankLine(
-    CardputerBrowserParser &parser
-)
-{
-    browserNewline(
-        parser
-    );
-
-    browserEmitNewline(
-        parser
-    );
-}
-
-
-static void browserFeedVisibleCharacter(
-    CardputerBrowserParser &parser,
-    char ch
-)
-{
-    if (parser.pagerStopped)
-    {
-        return;
-    }
-
-    if (
-        ch == '\r' ||
-        ch == '\n' ||
-        ch == '\t' ||
-        ch == ' '
-    )
-    {
-        browserSpace(
-            parser
-        );
-
-        return;
-    }
-
-    if (
-        (unsigned char)ch <
-        0x20
-    )
-    {
-        return;
-    }
-
-    if (
-        parser.wordLength + 1 >=
-            sizeof(parser.word)
-    )
-    {
-        browserFlushWord(
-            parser
-        );
-    }
-
-    parser.word[
-        parser.wordLength++
-    ] = ch;
-}
-
+/*
+ * ====================================================
+ * URL helpers
+ * ====================================================
+ */
 
 static char browserDecodeEntity(
     const char *entity
@@ -558,8 +287,7 @@ static void browserDecodeHrefEntities(
             *read++;
     }
 
-    *write =
-        0;
+    *write = 0;
 }
 
 
@@ -818,15 +546,13 @@ static bool browserResolveUrl(
         return true;
     }
 
-    if (
-        strchr(
-            reference,
-            ':'
-        )
-    )
+    if (strchr(
+        reference,
+        ':'
+    ))
     {
         /*
-         * mailto:, javascript:, data:, tel:, ftp:, etc.
+         * Ignore mailto:, javascript:, data:, ftp:, tel:, etc.
          */
         return false;
     }
@@ -965,10 +691,7 @@ static bool browserResolveUrl(
     }
     else
     {
-        const char *path =
-            basePath;
-
-        if (!path)
+        if (!basePath)
         {
             written =
                 snprintf(
@@ -982,17 +705,18 @@ static bool browserResolveUrl(
         else
         {
             const char *end =
-                path +
+                basePath +
                 strcspn(
-                    path,
+                    basePath,
                     "?#"
                 );
 
             const char *lastSlash =
-                path;
+                basePath;
 
             for (
-                const char *scan = path;
+                const char *scan =
+                    basePath;
                 scan < end;
                 scan++
             )
@@ -1031,39 +755,503 @@ static bool browserResolveUrl(
 }
 
 
-static void browserRenderMarker(
-    CardputerBrowserParser &parser,
-    uint8_t number
-)
+/*
+ * ====================================================
+ * Rendered page builder
+ * ====================================================
+ */
+
+static void browserClearPage()
 {
-    char marker[12];
-
-    snprintf(
-        marker,
-        sizeof(marker),
-        "[%u]",
-        number
-    );
-
-    browserSpace(
-        parser
-    );
-
     for (
-        const char *cursor = marker;
-        *cursor;
-        cursor++
+        uint16_t line = 0;
+        line <
+            BROWSER_PAGE_LINES;
+        line++
     )
     {
-        browserFeedVisibleCharacter(
-            parser,
-            *cursor
+        memset(
+            browserPage[line],
+            ' ',
+            BROWSER_LINE_WIDTH
+        );
+
+        browserPage[
+            line
+        ][
+            BROWSER_LINE_WIDTH
+        ] = 0;
+
+        memset(
+            browserPageLink[line],
+            0,
+            BROWSER_LINE_WIDTH
         );
     }
 
-    browserSpace(
+    browserPageLineCount =
+        1;
+
+    browserPageTruncated =
+        false;
+}
+
+
+struct CardputerBrowserParser
+{
+    const char *baseUrl;
+
+    uint8_t linkCount;
+    uint8_t activeLink;
+
+    bool inTag;
+    char tag[
+        BROWSER_TAG_MAX
+    ];
+    size_t tagLength;
+
+    bool inEntity;
+    char entity[20];
+    size_t entityLength;
+
+    bool skipScript;
+    bool skipStyle;
+    bool preformatted;
+
+    char word[
+        BROWSER_WORD_MAX
+    ];
+    size_t wordLength;
+    uint8_t wordLink;
+
+    bool pendingSpace;
+
+    uint16_t line;
+    uint8_t column;
+};
+
+
+static void browserPageNewline(
+    CardputerBrowserParser &parser
+)
+{
+    parser.column = 0;
+
+    if (
+        parser.line + 1 >=
+            BROWSER_PAGE_LINES
+    )
+    {
+        browserPageTruncated =
+            true;
+
+        parser.line =
+            BROWSER_PAGE_LINES - 1;
+
+        return;
+    }
+
+    parser.line++;
+
+    if (
+        parser.line + 1 >
+            browserPageLineCount
+    )
+    {
+        browserPageLineCount =
+            parser.line + 1;
+    }
+}
+
+
+static void browserPagePut(
+    CardputerBrowserParser &parser,
+    char ch,
+    uint8_t linkId
+)
+{
+    if (
+        parser.line >=
+            BROWSER_PAGE_LINES
+    )
+    {
+        browserPageTruncated =
+            true;
+
+        return;
+    }
+
+    if (
+        parser.column >=
+            BROWSER_LINE_WIDTH
+    )
+    {
+        browserPageNewline(
+            parser
+        );
+    }
+
+    if (
+        parser.line >=
+            BROWSER_PAGE_LINES
+    )
+    {
+        browserPageTruncated =
+            true;
+
+        return;
+    }
+
+    browserPage[
+        parser.line
+    ][
+        parser.column
+    ] = ch;
+
+    browserPageLink[
+        parser.line
+    ][
+        parser.column
+    ] = linkId;
+
+    if (
+        linkId > 0 &&
+        linkId <=
+            parser.linkCount
+    )
+    {
+        CardputerBrowserLink &link =
+            browserLinks[
+                linkId - 1
+            ];
+
+        if (
+            link.firstLine ==
+                0xFFFF
+        )
+        {
+            link.firstLine =
+                parser.line;
+        }
+
+        link.lastLine =
+            parser.line;
+    }
+
+    parser.column++;
+
+    if (
+        parser.line + 1 >
+            browserPageLineCount
+    )
+    {
+        browserPageLineCount =
+            parser.line + 1;
+    }
+}
+
+
+static void browserFlushWord(
+    CardputerBrowserParser &parser
+)
+{
+    if (
+        parser.wordLength ==
+        0
+    )
+    {
+        return;
+    }
+
+    if (
+        parser.pendingSpace &&
+        parser.column
+    )
+    {
+        if (
+            parser.column +
+            1 +
+            parser.wordLength >
+                BROWSER_LINE_WIDTH
+        )
+        {
+            browserPageNewline(
+                parser
+            );
+        }
+        else
+        {
+            browserPagePut(
+                parser,
+                ' ',
+                parser.wordLink
+            );
+        }
+    }
+    else if (
+        parser.column &&
+        parser.column +
+        parser.wordLength >
+            BROWSER_LINE_WIDTH
+    )
+    {
+        browserPageNewline(
+            parser
+        );
+    }
+
+    for (
+        size_t index = 0;
+        index <
+            parser.wordLength;
+        index++
+    )
+    {
+        browserPagePut(
+            parser,
+            parser.word[index],
+            parser.wordLink
+        );
+    }
+
+    parser.wordLength = 0;
+    parser.wordLink = 0;
+    parser.pendingSpace = false;
+}
+
+
+static void browserPageSpace(
+    CardputerBrowserParser &parser
+)
+{
+    browserFlushWord(
         parser
     );
+
+    if (parser.column)
+    {
+        parser.pendingSpace =
+            true;
+    }
+}
+
+
+static void browserPageBreak(
+    CardputerBrowserParser &parser
+)
+{
+    browserFlushWord(
+        parser
+    );
+
+    parser.pendingSpace =
+        false;
+
+    if (parser.column)
+    {
+        browserPageNewline(
+            parser
+        );
+    }
+}
+
+
+static void browserPageBlankLine(
+    CardputerBrowserParser &parser
+)
+{
+    browserPageBreak(
+        parser
+    );
+
+    if (
+        parser.line <
+            BROWSER_PAGE_LINES - 1
+    )
+    {
+        browserPageNewline(
+            parser
+        );
+    }
+}
+
+
+static void browserFeedVisibleCharacter(
+    CardputerBrowserParser &parser,
+    char ch
+)
+{
+    if (parser.preformatted)
+    {
+        browserFlushWord(
+            parser
+        );
+
+        parser.pendingSpace =
+            false;
+
+        if (
+            ch == '\r'
+        )
+        {
+            return;
+        }
+
+        if (
+            ch == '\n'
+        )
+        {
+            browserPageNewline(
+                parser
+            );
+
+            return;
+        }
+
+        if (ch == '\t')
+        {
+            uint8_t spaces =
+                4 -
+                (
+                    parser.column %
+                    4
+                );
+
+            while (spaces--)
+            {
+                browserPagePut(
+                    parser,
+                    ' ',
+                    parser.activeLink
+                );
+            }
+
+            return;
+        }
+
+        if (
+            (unsigned char)ch >=
+                0x20
+        )
+        {
+            browserPagePut(
+                parser,
+                ch,
+                parser.activeLink
+            );
+        }
+
+        return;
+    }
+
+    if (
+        ch == '\r' ||
+        ch == '\n' ||
+        ch == '\t' ||
+        ch == ' '
+    )
+    {
+        browserPageSpace(
+            parser
+        );
+
+        return;
+    }
+
+    if (
+        (unsigned char)ch <
+            0x20
+    )
+    {
+        return;
+    }
+
+    if (
+        parser.wordLength + 1 >=
+            sizeof(parser.word)
+    )
+    {
+        browserFlushWord(
+            parser
+        );
+    }
+
+    if (
+        parser.wordLength ==
+        0
+    )
+    {
+        parser.wordLink =
+            parser.activeLink;
+    }
+
+    parser.word[
+        parser.wordLength++
+    ] = ch;
+}
+
+
+static uint8_t browserAddLink(
+    CardputerBrowserParser &parser,
+    const char *url
+)
+{
+    if (
+        !url ||
+        !url[0] ||
+        parser.linkCount >=
+            BROWSER_LINK_MAX ||
+        parser.line >=
+            BROWSER_PAGE_LINES
+    )
+    {
+        return 0;
+    }
+
+    CardputerBrowserLink &link =
+        browserLinks[
+            parser.linkCount
+        ];
+
+    strncpy(
+        link.url,
+        url,
+        BROWSER_URL_MAX - 1
+    );
+
+    link.url[
+        BROWSER_URL_MAX - 1
+    ] = 0;
+
+    link.firstLine =
+        0xFFFF;
+
+    link.lastLine =
+        0xFFFF;
+
+    parser.linkCount++;
+
+    return parser.linkCount;
+}
+
+
+static void browserFeedAttributeText(
+    CardputerBrowserParser &parser,
+    const char *text
+)
+{
+    if (!text)
+    {
+        return;
+    }
+
+    while (*text)
+    {
+        browserFeedVisibleCharacter(
+            parser,
+            *text++
+        );
+    }
 }
 
 
@@ -1094,8 +1282,7 @@ static void browserProcessTag(
             "!--",
             3
         ) == 0 ||
-        tag[0] ==
-            '!'
+        tag[0] == '!'
     )
     {
         return;
@@ -1186,6 +1373,112 @@ static void browserProcessTag(
     if (
         strcmp(
             tagName,
+            "pre"
+        ) == 0
+    )
+    {
+        browserPageBreak(
+            parser
+        );
+
+        parser.preformatted =
+            !closing;
+
+        if (closing)
+        {
+            browserPageBreak(
+                parser
+            );
+        }
+
+        return;
+    }
+
+    if (
+        strcmp(
+            tagName,
+            "a"
+        ) == 0
+    )
+    {
+        browserFlushWord(
+            parser
+        );
+
+        if (closing)
+        {
+            parser.activeLink = 0;
+            return;
+        }
+
+        char href[
+            BROWSER_URL_MAX
+        ];
+
+        char resolved[
+            BROWSER_URL_MAX
+        ];
+
+        if (
+            browserExtractAttribute(
+                parser.tag,
+                "href",
+                href,
+                sizeof(href)
+            ) &&
+            browserResolveUrl(
+                parser.baseUrl,
+                href,
+                resolved,
+                sizeof(resolved)
+            )
+        )
+        {
+            parser.activeLink =
+                browserAddLink(
+                    parser,
+                    resolved
+                );
+        }
+        else
+        {
+            parser.activeLink = 0;
+        }
+
+        return;
+    }
+
+    if (
+        !closing &&
+        strcmp(
+            tagName,
+            "img"
+        ) == 0
+    )
+    {
+        char alt[
+            BROWSER_WORD_MAX
+        ];
+
+        if (browserExtractAttribute(
+            parser.tag,
+            "alt",
+            alt,
+            sizeof(alt)
+        ))
+        {
+            browserFeedAttributeText(
+                parser,
+                alt
+            );
+        }
+
+        return;
+    }
+
+    if (
+        strcmp(
+            tagName,
             "br"
         ) == 0 ||
         strcmp(
@@ -1194,7 +1487,31 @@ static void browserProcessTag(
         ) == 0
     )
     {
-        browserNewline(
+        browserPageBreak(
+            parser
+        );
+
+        return;
+    }
+
+    if (
+        !closing &&
+        strcmp(
+            tagName,
+            "li"
+        ) == 0
+    )
+    {
+        browserPageBreak(
+            parser
+        );
+
+        browserFeedVisibleCharacter(
+            parser,
+            '*'
+        );
+
+        browserPageSpace(
             parser
         );
 
@@ -1260,102 +1577,10 @@ static void browserProcessTag(
         ) == 0
     )
     {
-        browserNewline(
+        browserPageBreak(
             parser
         );
     }
-
-    if (
-        !closing &&
-        strcmp(
-            tagName,
-            "li"
-        ) == 0
-    )
-    {
-        browserNewline(
-            parser
-        );
-
-        browserFeedVisibleCharacter(
-            parser,
-            '*'
-        );
-
-        browserSpace(
-            parser
-        );
-
-        return;
-    }
-
-    if (
-        closing ||
-        strcmp(
-            tagName,
-            "a"
-        ) != 0
-    )
-    {
-        return;
-    }
-
-    char href[
-        BROWSER_URL_MAX
-    ];
-
-    if (!browserExtractAttribute(
-        parser.tag,
-        "href",
-        href,
-        sizeof(href)
-    ))
-    {
-        return;
-    }
-
-    char resolved[
-        BROWSER_URL_MAX
-    ];
-
-    if (!browserResolveUrl(
-        parser.baseUrl,
-        href,
-        resolved,
-        sizeof(resolved)
-    ))
-    {
-        return;
-    }
-
-    if (
-        parser.linkCount >=
-            BROWSER_LINK_MAX
-    )
-    {
-        return;
-    }
-
-    strncpy(
-        parser.links[
-            parser.linkCount
-        ].url,
-        resolved,
-        BROWSER_URL_MAX - 1
-    );
-
-    parser.links[
-        parser.linkCount
-    ].url[
-        BROWSER_URL_MAX - 1
-    ] = 0;
-
-    parser.linkCount++;
-
-    browserRenderMarker(
-        parser,
-        parser.linkCount
-    );
 }
 
 
@@ -1375,8 +1600,7 @@ static void browserFeedHtmlByte(
                 parser
             );
 
-            parser.tagLength =
-                0;
+            parser.tagLength = 0;
 
             return;
         }
@@ -1396,11 +1620,21 @@ static void browserFeedHtmlByte(
 
     if (ch == '<')
     {
+        browserFlushWord(
+            parser
+        );
+
         if (parser.inEntity)
         {
+            browserFeedVisibleCharacter(
+                parser,
+                '&'
+            );
+
             for (
                 size_t index = 0;
-                index < parser.entityLength;
+                index <
+                    parser.entityLength;
                 index++
             )
             {
@@ -1410,18 +1644,12 @@ static void browserFeedHtmlByte(
                 );
             }
 
-            parser.inEntity =
-                false;
-
-            parser.entityLength =
-                0;
+            parser.inEntity = false;
+            parser.entityLength = 0;
         }
 
-        parser.inTag =
-            true;
-
-        parser.tagLength =
-            0;
+        parser.inTag = true;
+        parser.tagLength = 0;
 
         return;
     }
@@ -1455,11 +1683,8 @@ static void browserFeedHtmlByte(
                 );
             }
 
-            parser.inEntity =
-                false;
-
-            parser.entityLength =
-                0;
+            parser.inEntity = false;
+            parser.entityLength = 0;
 
             return;
         }
@@ -1491,7 +1716,8 @@ static void browserFeedHtmlByte(
 
         for (
             size_t index = 0;
-            index < parser.entityLength;
+            index <
+                parser.entityLength;
             index++
         )
         {
@@ -1501,20 +1727,14 @@ static void browserFeedHtmlByte(
             );
         }
 
-        parser.inEntity =
-            false;
-
-        parser.entityLength =
-            0;
+        parser.inEntity = false;
+        parser.entityLength = 0;
     }
 
     if (ch == '&')
     {
-        parser.inEntity =
-            true;
-
-        parser.entityLength =
-            0;
+        parser.inEntity = true;
+        parser.entityLength = 0;
 
         return;
     }
@@ -1539,7 +1759,8 @@ static void browserFinishParser(
 
         for (
             size_t index = 0;
-            index < parser.entityLength;
+            index <
+                parser.entityLength;
             index++
         )
         {
@@ -1554,24 +1775,57 @@ static void browserFinishParser(
         parser
     );
 
-    if (parser.column)
+    while (
+        browserPageLineCount > 1
+    )
     {
-        _puts(
-            "\r\n"
-        );
+        uint16_t last =
+            browserPageLineCount - 1;
+
+        bool empty =
+            true;
+
+        for (
+            uint8_t col = 0;
+            col <
+                BROWSER_LINE_WIDTH;
+            col++
+        )
+        {
+            if (
+                browserPage[
+                    last
+                ][
+                    col
+                ] != ' '
+            )
+            {
+                empty = false;
+                break;
+            }
+        }
+
+        if (!empty)
+        {
+            break;
+        }
+
+        browserPageLineCount--;
     }
 }
 
 
+/*
+ * ====================================================
+ * HTTP fetch + parse
+ * ====================================================
+ */
+
 static bool browserFetchPage(
     const char *url,
-    CardputerBrowserLink *links,
     uint8_t &linkCount
 )
 {
-    linkCount =
-        0;
-
     if (
         !url ||
         (
@@ -1588,10 +1842,6 @@ static bool browserFetchPage(
         )
     )
     {
-        _puts(
-            "BROWSE: URL must begin with http:// or https://\r\n"
-        );
-
         return false;
     }
 
@@ -1608,9 +1858,6 @@ static bool browserFetchPage(
 
     if (secure)
     {
-        /*
-         * Same TLS policy as WGET: encrypted transport, no CA bundle yet.
-         */
         secureClient.setInsecure();
 
         if (!http.begin(
@@ -1618,10 +1865,6 @@ static bool browserFetchPage(
             url
         ))
         {
-            _puts(
-                "BROWSE: unable to initialise HTTPS\r\n"
-            );
-
             return false;
         }
     }
@@ -1632,10 +1875,6 @@ static bool browserFetchPage(
             url
         ))
         {
-            _puts(
-                "BROWSE: unable to initialise HTTP\r\n"
-            );
-
             return false;
         }
     }
@@ -1666,19 +1905,6 @@ static bool browserFetchPage(
         "identity"
     );
 
-    _puts(
-        "\r\nBROWSE: "
-    );
-
-    _puts(
-        url
-    );
-
-    _puts(
-        "\r\n"
-        "--------------------------------------\r\n"
-    );
-
     int response =
         http.GET();
 
@@ -1687,21 +1913,7 @@ static bool browserFetchPage(
         response >= 300
     )
     {
-        char message[64];
-
-        snprintf(
-            message,
-            sizeof(message),
-            "BROWSE: HTTP error %d\r\n",
-            response
-        );
-
-        _puts(
-            message
-        );
-
         http.end();
-
         return false;
     }
 
@@ -1720,11 +1932,6 @@ static bool browserFetchPage(
     if (!cachedPage)
     {
         http.end();
-
-        _puts(
-            "BROWSE: cannot create temporary page file\r\n"
-        );
-
         return false;
     }
 
@@ -1771,9 +1978,7 @@ static bool browserFetchPage(
 
             if (got <= 0)
             {
-                okay =
-                    false;
-
+                okay = false;
                 break;
             }
 
@@ -1788,13 +1993,7 @@ static bool browserFetchPage(
                 (size_t)got
             )
             {
-                _puts(
-                    "BROWSE: SD write failed\r\n"
-                );
-
-                okay =
-                    false;
-
+                okay = false;
                 break;
             }
 
@@ -1805,8 +2004,7 @@ static bool browserFetchPage(
 
                 if (remaining < 0)
                 {
-                    remaining =
-                        0;
+                    remaining = 0;
                 }
             }
 
@@ -1828,9 +2026,7 @@ static bool browserFetchPage(
                 break;
             }
 
-            okay =
-                false;
-
+            okay = false;
             break;
         }
 
@@ -1842,13 +2038,7 @@ static bool browserFetchPage(
                 BROWSER_FETCH_TIMEOUT
         )
         {
-            _puts(
-                "\r\nBROWSE: receive timeout\r\n"
-            );
-
-            okay =
-                false;
-
+            okay = false;
             break;
         }
 
@@ -1866,10 +2056,6 @@ static bool browserFetchPage(
             BROWSER_TEMP_FILE
         );
 
-        _puts(
-            "BROWSE: page transfer incomplete\r\n"
-        );
-
         return false;
     }
 
@@ -1885,23 +2071,35 @@ static bool browserFetchPage(
             BROWSER_TEMP_FILE
         );
 
-        _puts(
-            "BROWSE: cannot reopen downloaded page\r\n"
-        );
-
         return false;
+    }
+
+    browserClearPage();
+
+    for (
+        uint8_t index = 0;
+        index <
+            BROWSER_LINK_MAX;
+        index++
+    )
+    {
+        browserLinks[
+            index
+        ].url[0] = 0;
+
+        browserLinks[
+            index
+        ].firstLine = 0xFFFF;
+
+        browserLinks[
+            index
+        ].lastLine = 0xFFFF;
     }
 
     CardputerBrowserParser parser = {};
 
     parser.baseUrl =
         url;
-
-    parser.links =
-        links;
-
-    parser.linkCount =
-        0;
 
     while (page.available())
     {
@@ -1929,153 +2127,1223 @@ static bool browserFetchPage(
         parser
     );
 
+    /*
+     * Drop anchors which had no visible text/ALT content.  They cannot be
+     * selected meaningfully in a text browser.
+     */
+    uint8_t compacted =
+        0;
+
+    for (
+        uint8_t oldIndex = 0;
+        oldIndex <
+            parser.linkCount;
+        oldIndex++
+    )
+    {
+        if (
+            browserLinks[
+                oldIndex
+            ].firstLine ==
+                0xFFFF
+        )
+        {
+            uint8_t oldId =
+                oldIndex + 1;
+
+            for (
+                uint16_t line = 0;
+                line <
+                    browserPageLineCount;
+                line++
+            )
+            {
+                for (
+                    uint8_t col = 0;
+                    col <
+                        BROWSER_LINE_WIDTH;
+                    col++
+                )
+                {
+                    if (
+                        browserPageLink[
+                            line
+                        ][
+                            col
+                        ] ==
+                            oldId
+                    )
+                    {
+                        browserPageLink[
+                            line
+                        ][
+                            col
+                        ] = 0;
+                    }
+                }
+            }
+
+            continue;
+        }
+
+        if (
+            compacted !=
+                oldIndex
+        )
+        {
+            browserLinks[
+                compacted
+            ] =
+                browserLinks[
+                    oldIndex
+                ];
+
+            uint8_t oldId =
+                oldIndex + 1;
+
+            uint8_t newId =
+                compacted + 1;
+
+            for (
+                uint16_t line = 0;
+                line <
+                    browserPageLineCount;
+                line++
+            )
+            {
+                for (
+                    uint8_t col = 0;
+                    col <
+                        BROWSER_LINE_WIDTH;
+                    col++
+                )
+                {
+                    if (
+                        browserPageLink[
+                            line
+                        ][
+                            col
+                        ] ==
+                            oldId
+                    )
+                    {
+                        browserPageLink[
+                            line
+                        ][
+                            col
+                        ] =
+                            newId;
+                    }
+                }
+            }
+        }
+
+        compacted++;
+    }
+
     linkCount =
-        parser.linkCount;
-
-    char summary[160];
-
-    snprintf(
-        summary,
-        sizeof(summary),
-        "--------------------------------------\r\n"
-        "%u link%s\r\n"
-        "number=follow  B=back  G=go\r\n"
-        "R=reload  L=links  H=help  Q=quit\r\n",
-        linkCount,
-        linkCount == 1
-            ? ""
-            : "s"
-    );
-
-    _puts(
-        summary
-    );
+        compacted;
 
     return true;
 }
 
 
-static void browserListLinks(
-    CardputerBrowserLink *links,
+/*
+ * ====================================================
+ * Interactive terminal UI
+ * ====================================================
+ */
+
+static void browserWritePaddedLine(
+    const char *text,
+    bool reverse
+)
+{
+    if (reverse)
+    {
+        _puts(
+            "\x1B[7m"
+        );
+    }
+
+    size_t length =
+        text
+            ? strlen(text)
+            : 0;
+
+    if (
+        length >
+        BROWSER_LINE_WIDTH
+    )
+    {
+        length =
+            BROWSER_LINE_WIDTH;
+    }
+
+    for (
+        size_t index = 0;
+        index < length;
+        index++
+    )
+    {
+        _putcon(
+            (uint8_t)text[index]
+        );
+    }
+
+    for (
+        size_t index = length;
+        index <
+            BROWSER_LINE_WIDTH;
+        index++
+    )
+    {
+        _putcon(' ');
+    }
+
+    if (reverse)
+    {
+        _puts(
+            "\x1B[0m"
+        );
+    }
+}
+
+
+static void browserPosition(
+    uint8_t row,
+    uint8_t column = 1
+)
+{
+    char sequence[24];
+
+    snprintf(
+        sequence,
+        sizeof(sequence),
+        "\x1B[%u;%uH",
+        row,
+        column
+    );
+
+    _puts(
+        sequence
+    );
+}
+
+
+static int browserFirstSelectableLink(
     uint8_t linkCount
 )
 {
-    if (!linkCount)
-    {
-        _puts(
-            "No links on this page.\r\n"
-        );
-
-        return;
-    }
-
     for (
         uint8_t index = 0;
         index < linkCount;
         index++
     )
     {
-        char number[12];
+        if (
+            browserLinks[
+                index
+            ].firstLine !=
+                0xFFFF
+        )
+        {
+            return index;
+        }
+    }
 
-        snprintf(
-            number,
-            sizeof(number),
-            "%u: ",
-            index + 1
-        );
+    return -1;
+}
 
-        _puts(
-            number
-        );
 
-        _puts(
-            links[index].url
-        );
+static void browserClampViewport(
+    uint16_t &topLine
+)
+{
+    uint16_t maximum =
+        browserPageLineCount >
+            BROWSER_VIEW_ROWS
+            ? browserPageLineCount -
+                BROWSER_VIEW_ROWS
+            : 0;
 
-        _puts(
-            "\r\n"
-        );
+    if (
+        topLine >
+            maximum
+    )
+    {
+        topLine =
+            maximum;
     }
 }
 
 
-static bool browserParseLinkNumber(
-    const char *text,
-    uint8_t &number
+static void browserEnsureSelectionVisible(
+    int selectedLink,
+    uint16_t &topLine
 )
 {
     if (
-        !text ||
-        !text[0]
+        selectedLink < 0 ||
+        selectedLink >=
+            BROWSER_LINK_MAX
     )
     {
-        return false;
+        browserClampViewport(
+            topLine
+        );
+
+        return;
     }
 
-    unsigned long value =
-        0;
+    CardputerBrowserLink &link =
+        browserLinks[
+            selectedLink
+        ];
 
-    while (*text)
+    if (
+        link.firstLine ==
+            0xFFFF
+    )
     {
-        if (
-            *text < '0' ||
-            *text > '9'
-        )
-        {
-            return false;
-        }
-
-        value =
-            value * 10 +
-            (
-                *text - '0'
-            );
-
-        if (
-            value >
-            BROWSER_LINK_MAX
-        )
-        {
-            return false;
-        }
-
-        text++;
+        return;
     }
 
     if (
-        value < 1 ||
-        value >
-            BROWSER_LINK_MAX
+        link.firstLine <
+            topLine
     )
+    {
+        topLine =
+            link.firstLine;
+    }
+    else if (
+        link.lastLine >=
+            topLine +
+            BROWSER_VIEW_ROWS
+    )
+    {
+        topLine =
+            link.lastLine -
+            BROWSER_VIEW_ROWS +
+            1;
+    }
+
+    browserClampViewport(
+        topLine
+    );
+}
+
+
+static int browserLinkOnOrAfterLine(
+    uint8_t linkCount,
+    uint16_t line
+)
+{
+    for (
+        uint8_t index = 0;
+        index < linkCount;
+        index++
+    )
+    {
+        if (
+            browserLinks[
+                index
+            ].firstLine !=
+                0xFFFF &&
+            browserLinks[
+                index
+            ].lastLine >=
+                line
+        )
+        {
+            return index;
+        }
+    }
+
+    return browserFirstSelectableLink(
+        linkCount
+    );
+}
+
+
+static void browserRender(
+    uint16_t topLine,
+    int selectedLink,
+    uint8_t linkCount
+)
+{
+    _puts(
+        "\x1B[2J\x1B[H"
+    );
+
+    for (
+        uint8_t screenRow = 0;
+        screenRow <
+            BROWSER_VIEW_ROWS;
+        screenRow++
+    )
+    {
+        browserPosition(
+            screenRow + 1
+        );
+
+        uint16_t pageLine =
+            topLine +
+            screenRow;
+
+        bool reverse =
+            false;
+
+        for (
+            uint8_t col = 0;
+            col <
+                BROWSER_LINE_WIDTH;
+            col++
+        )
+        {
+            char ch = ' ';
+            uint8_t linkId = 0;
+
+            if (
+                pageLine <
+                    browserPageLineCount
+            )
+            {
+                ch =
+                    browserPage[
+                        pageLine
+                    ][
+                        col
+                    ];
+
+                linkId =
+                    browserPageLink[
+                        pageLine
+                    ][
+                        col
+                    ];
+            }
+
+            bool shouldReverse =
+                (
+                    selectedLink >= 0 &&
+                    linkId ==
+                        (uint8_t)(
+                            selectedLink +
+                            1
+                        )
+                );
+
+            if (
+                shouldReverse !=
+                    reverse
+            )
+            {
+                _puts(
+                    shouldReverse
+                        ? "\x1B[7m"
+                        : "\x1B[0m"
+                );
+
+                reverse =
+                    shouldReverse;
+            }
+
+            _putcon(
+                (uint8_t)ch
+            );
+        }
+
+        if (reverse)
+        {
+            _puts(
+                "\x1B[0m"
+            );
+        }
+    }
+
+    char status[
+        BROWSER_LINE_WIDTH + 1
+    ];
+
+    memset(
+        status,
+        ' ',
+        BROWSER_LINE_WIDTH
+    );
+
+    status[
+        BROWSER_LINE_WIDTH
+    ] = 0;
+
+    const char *statusText =
+        browserCurrent;
+
+    if (
+        selectedLink >= 0 &&
+        selectedLink <
+            linkCount
+    )
+    {
+        statusText =
+            browserLinks[
+                selectedLink
+            ].url;
+    }
+
+    if (browserPageTruncated)
+    {
+        snprintf(
+            status,
+            sizeof(status),
+            "TRUNC %u/%u %.24s",
+            (unsigned)(
+                topLine + 1
+            ),
+            (unsigned)
+                browserPageLineCount,
+            statusText
+        );
+    }
+    else
+    {
+        snprintf(
+            status,
+            sizeof(status),
+            "%u/%u %.30s",
+            (unsigned)(
+                topLine + 1
+            ),
+            (unsigned)
+                browserPageLineCount,
+            statusText
+        );
+    }
+
+    browserPosition(
+        15
+    );
+
+    browserWritePaddedLine(
+        status,
+        true
+    );
+
+    browserPosition(
+        16
+    );
+
+    browserWritePaddedLine(
+        "Arrows links  Space page  G H Q",
+        false
+    );
+
+    /*
+     * Keep the cursor at the bottom without moving beyond the physical
+     * 16-row viewport.
+     */
+    browserPosition(
+        16,
+        BROWSER_LINE_WIDTH
+    );
+
+    terminalMaybeRefresh();
+}
+
+
+enum CardputerBrowserKey
+{
+    BROWSER_KEY_CHARACTER =
+        0,
+
+    BROWSER_KEY_UP,
+    BROWSER_KEY_DOWN,
+    BROWSER_KEY_LEFT,
+    BROWSER_KEY_RIGHT,
+    BROWSER_KEY_PAGE_UP,
+    BROWSER_KEY_PAGE_DOWN,
+    BROWSER_KEY_HOME,
+    BROWSER_KEY_END,
+    BROWSER_KEY_ENTER,
+    BROWSER_KEY_BACKSPACE
+};
+
+
+struct CardputerBrowserInput
+{
+    CardputerBrowserKey key;
+    uint8_t character;
+};
+
+
+static CardputerBrowserInput browserReadInput()
+{
+    CardputerBrowserInput input =
+    {
+        BROWSER_KEY_CHARACTER,
+        0
+    };
+
+    uint8_t ch =
+        _getcon();
+
+    if (
+        ch == '\r' ||
+        ch == '\n'
+    )
+    {
+        input.key =
+            BROWSER_KEY_ENTER;
+
+        return input;
+    }
+
+    if (
+        ch == 0x08 ||
+        ch == 0x7F
+    )
+    {
+        input.key =
+            BROWSER_KEY_BACKSPACE;
+
+        return input;
+    }
+
+    if (ch != 0x1B)
+    {
+        input.character =
+            ch;
+
+        return input;
+    }
+
+    uint8_t second =
+        _getcon();
+
+    if (
+        second == '['
+    )
+    {
+        uint8_t third =
+            _getcon();
+
+        if (third == 'A')
+        {
+            input.key =
+                BROWSER_KEY_UP;
+        }
+        else if (third == 'B')
+        {
+            input.key =
+                BROWSER_KEY_DOWN;
+        }
+        else if (third == 'C')
+        {
+            input.key =
+                BROWSER_KEY_RIGHT;
+        }
+        else if (third == 'D')
+        {
+            input.key =
+                BROWSER_KEY_LEFT;
+        }
+        else if (
+            third == 'H'
+        )
+        {
+            input.key =
+                BROWSER_KEY_HOME;
+        }
+        else if (
+            third == 'F'
+        )
+        {
+            input.key =
+                BROWSER_KEY_END;
+        }
+        else if (
+            third >= '0' &&
+            third <= '9'
+        )
+        {
+            uint16_t number =
+                third - '0';
+
+            while (true)
+            {
+                uint8_t next =
+                    _getcon();
+
+                if (
+                    next >= '0' &&
+                    next <= '9'
+                )
+                {
+                    number =
+                        number * 10 +
+                        (
+                            next - '0'
+                        );
+
+                    continue;
+                }
+
+                if (next == '~')
+                {
+                    if (
+                        number == 1 ||
+                        number == 7
+                    )
+                    {
+                        input.key =
+                            BROWSER_KEY_HOME;
+                    }
+                    else if (
+                        number == 4 ||
+                        number == 8
+                    )
+                    {
+                        input.key =
+                            BROWSER_KEY_END;
+                    }
+                    else if (
+                        number == 5
+                    )
+                    {
+                        input.key =
+                            BROWSER_KEY_PAGE_UP;
+                    }
+                    else if (
+                        number == 6
+                    )
+                    {
+                        input.key =
+                            BROWSER_KEY_PAGE_DOWN;
+                    }
+                }
+
+                break;
+            }
+        }
+
+        return input;
+    }
+
+    if (
+        second == 'O'
+    )
+    {
+        uint8_t third =
+            _getcon();
+
+        if (third == 'A')
+        {
+            input.key =
+                BROWSER_KEY_UP;
+        }
+        else if (third == 'B')
+        {
+            input.key =
+                BROWSER_KEY_DOWN;
+        }
+        else if (third == 'C')
+        {
+            input.key =
+                BROWSER_KEY_RIGHT;
+        }
+        else if (third == 'D')
+        {
+            input.key =
+                BROWSER_KEY_LEFT;
+        }
+        else if (third == 'H')
+        {
+            input.key =
+                BROWSER_KEY_HOME;
+        }
+        else if (third == 'F')
+        {
+            input.key =
+                BROWSER_KEY_END;
+        }
+
+        return input;
+    }
+
+    return input;
+}
+
+
+static void browserPushHistory(
+    const char *url,
+    uint8_t &historyCount
+)
+{
+    if (
+        !url ||
+        !url[0]
+    )
+    {
+        return;
+    }
+
+    if (
+        historyCount <
+            BROWSER_HISTORY_MAX
+    )
+    {
+        strncpy(
+            browserHistory[
+                historyCount++
+            ],
+            url,
+            BROWSER_URL_MAX - 1
+        );
+
+        browserHistory[
+            historyCount - 1
+        ][
+            BROWSER_URL_MAX - 1
+        ] = 0;
+
+        return;
+    }
+
+    for (
+        uint8_t index = 1;
+        index <
+            BROWSER_HISTORY_MAX;
+        index++
+    )
+    {
+        strcpy(
+            browserHistory[
+                index - 1
+            ],
+            browserHistory[
+                index
+            ]
+        );
+    }
+
+    strncpy(
+        browserHistory[
+            BROWSER_HISTORY_MAX - 1
+        ],
+        url,
+        BROWSER_URL_MAX - 1
+    );
+
+    browserHistory[
+        BROWSER_HISTORY_MAX - 1
+    ][
+        BROWSER_URL_MAX - 1
+    ] = 0;
+}
+
+
+static bool browserGoBack(
+    uint8_t &historyCount,
+    uint8_t &linkCount,
+    int &selectedLink,
+    uint16_t &topLine
+)
+{
+    if (!historyCount)
     {
         return false;
     }
 
-    number =
-        (uint8_t)value;
+    char previous[
+        BROWSER_URL_MAX
+    ];
+
+    strcpy(
+        previous,
+        browserHistory[
+            historyCount - 1
+        ]
+    );
+
+    historyCount--;
+
+    if (!browserFetchPage(
+        previous,
+        linkCount
+    ))
+    {
+        historyCount++;
+        return false;
+    }
+
+    strcpy(
+        browserCurrent,
+        previous
+    );
+
+    topLine = 0;
+
+    selectedLink =
+        browserFirstSelectableLink(
+            linkCount
+        );
+
+    browserEnsureSelectionVisible(
+        selectedLink,
+        topLine
+    );
 
     return true;
 }
 
 
-static void browserHelp()
+static bool browserFollowLink(
+    int selectedLink,
+    uint8_t &historyCount,
+    uint8_t &linkCount,
+    uint16_t &topLine
+)
+{
+    if (
+        selectedLink < 0 ||
+        selectedLink >=
+            linkCount
+    )
+    {
+        return false;
+    }
+
+    char target[
+        BROWSER_URL_MAX
+    ];
+
+    strcpy(
+        target,
+        browserLinks[
+            selectedLink
+        ].url
+    );
+
+    browserPushHistory(
+        browserCurrent,
+        historyCount
+    );
+
+    if (!browserFetchPage(
+        target,
+        linkCount
+    ))
+    {
+        if (historyCount)
+        {
+            historyCount--;
+        }
+
+        return false;
+    }
+
+    strcpy(
+        browserCurrent,
+        target
+    );
+
+    topLine = 0;
+
+    return true;
+}
+
+
+static void browserMessageScreen(
+    const char *title,
+    const char *text
+)
 {
     _puts(
-        "\r\n"
-        "BROWSE commands\r\n"
-        "---------------\r\n"
-        "number       follow numbered link\r\n"
-        "B            back\r\n"
-        "G url        go to URL\r\n"
-        "BROWSE url   go to URL\r\n"
-        "http://...   go directly to URL\r\n"
-        "R            reload\r\n"
-        "L            list links and URLs\r\n"
-        "H or ?       help\r\n"
-        "Q            quit\r\n"
+        "\x1B[2J\x1B[H"
+    );
+
+    if (title)
+    {
+        _puts(
+            "\x1B[7m"
+        );
+
+        browserWritePaddedLine(
+            title,
+            false
+        );
+
+        _puts(
+            "\x1B[0m\r\n"
+        );
+    }
+
+    if (text)
+    {
+        _puts(
+            text
+        );
+    }
+
+    _puts(
+        "\r\n\r\nPress any key..."
+    );
+
+    _getcon();
+}
+
+
+static void browserHelp()
+{
+    browserMessageScreen(
+        "BROWSE help",
+        "Up/Down     previous/next link\r\n"
+        "Right/Enter follow selected link\r\n"
+        "Left/Bksp   back\r\n"
+        "Space/PgDn  page down\r\n"
+        "-/PgUp      page up\r\n"
+        "Home/End    top/bottom\r\n"
+        "G           go to URL\r\n"
+        "R           reload\r\n"
+        "D           download selected link\r\n"
+        "L           show selected URL\r\n"
+        "H or ?      this help\r\n"
+        "Q           quit"
     );
 }
 
+
+static void browserShowSelectedUrl(
+    int selectedLink,
+    uint8_t linkCount
+)
+{
+    if (
+        selectedLink < 0 ||
+        selectedLink >=
+            linkCount
+    )
+    {
+        browserMessageScreen(
+            "Selected link",
+            "No link is selected."
+        );
+
+        return;
+    }
+
+    browserMessageScreen(
+        "Selected link",
+        browserLinks[
+            selectedLink
+        ].url
+    );
+}
+
+
+static void browserDownloadSelected(
+    int selectedLink,
+    uint8_t linkCount
+)
+{
+    if (
+        selectedLink < 0 ||
+        selectedLink >=
+            linkCount
+    )
+    {
+        browserMessageScreen(
+            "Download",
+            "No link is selected."
+        );
+
+        return;
+    }
+
+    _puts(
+        "\x1B[2J\x1B[H"
+        "Download selected link\r\n"
+        "----------------------\r\n"
+    );
+
+    _puts(
+        browserLinks[
+            selectedLink
+        ].url
+    );
+
+    _puts(
+        "\r\n\r\n"
+    );
+
+    char destination[
+        WGET_NAME_SIZE + 3
+    ];
+
+    if (!cardputerNetworkReadLine(
+        "Save as (blank=URL name): ",
+        destination,
+        sizeof(destination)
+    ))
+    {
+        return;
+    }
+
+    char tail[128];
+
+    int written = 0;
+
+    if (destination[0])
+    {
+        written =
+            snprintf(
+                tail,
+                sizeof(tail),
+                "%s %s",
+                browserLinks[
+                    selectedLink
+                ].url,
+                destination
+            );
+    }
+    else
+    {
+        written =
+            snprintf(
+                tail,
+                sizeof(tail),
+                "%s",
+                browserLinks[
+                    selectedLink
+                ].url
+            );
+    }
+
+    if (
+        written <= 0 ||
+        written > 127
+    )
+    {
+        browserMessageScreen(
+            "Download",
+            "URL is too long for the CP/M WGET command tail."
+        );
+
+        return;
+    }
+
+    _RamWrite(
+        defDMA,
+        (uint8_t)written
+    );
+
+    for (
+        int index = 0;
+        index < written;
+        index++
+    )
+    {
+        _RamWrite(
+            defDMA + 1 + index,
+            (uint8_t)tail[index]
+        );
+    }
+
+    _puts(
+        "\r\n"
+    );
+
+    cardputerWgetBdos(
+        defDMA
+    );
+
+    _puts(
+        "\r\nPress any key..."
+    );
+
+    _getcon();
+}
+
+
+static bool browserPromptUrl(
+    char *resolved,
+    size_t resolvedSize
+)
+{
+    _puts(
+        "\x1B[2J\x1B[H"
+        "Go to URL\r\n"
+        "---------\r\n"
+    );
+
+    char entered[
+        BROWSER_URL_MAX
+    ];
+
+    if (!cardputerNetworkReadLine(
+        "URL: ",
+        entered,
+        sizeof(entered)
+    ))
+    {
+        return false;
+    }
+
+    char *url =
+        wifiTrim(
+            entered
+        );
+
+    if (!url[0])
+    {
+        return false;
+    }
+
+    if (browserResolveUrl(
+        browserCurrent,
+        url,
+        resolved,
+        resolvedSize
+    ))
+    {
+        return true;
+    }
+
+    if (
+        (
+            strncasecmp(
+                url,
+                "http://",
+                7
+            ) == 0 ||
+            strncasecmp(
+                url,
+                "https://",
+                8
+            ) == 0
+        ) &&
+        strlen(url) <
+            resolvedSize
+    )
+    {
+        strcpy(
+            resolved,
+            url
+        );
+
+        return true;
+    }
+
+    return false;
+}
+
+
+/*
+ * ====================================================
+ * CP/M entry point
+ * ====================================================
+ */
 
 uint16 cardputerBrowserBdos(
     uint16 commandTail
@@ -2113,9 +3381,6 @@ uint16 cardputerBrowserBdos(
         return 0x00FF;
     }
 
-    char *current =
-        browserCurrent;
-
     char *initial =
         wifiTrim(
             tail
@@ -2125,7 +3390,7 @@ uint16 cardputerBrowserBdos(
     {
         if (
             strlen(initial) >=
-                BROWSER_URL_MAX
+                sizeof(browserCurrent)
         )
         {
             _puts(
@@ -2136,398 +3401,437 @@ uint16 cardputerBrowserBdos(
         }
 
         strcpy(
-            current,
+            browserCurrent,
             initial
         );
     }
     else
     {
+        _puts(
+            "\x1B[2J\x1B[H"
+            "BROWSE\r\n"
+            "------\r\n"
+        );
+
         if (!cardputerNetworkReadLine(
             "URL: ",
-            current,
-            BROWSER_URL_MAX
+            browserCurrent,
+            sizeof(browserCurrent)
         ))
         {
             return 0;
         }
     }
 
-    CardputerBrowserLink *links =
-        browserLinks;
-
     uint8_t linkCount =
         0;
 
-    char (*history)[BROWSER_URL_MAX] =
-        browserHistory;
+    if (!browserFetchPage(
+        browserCurrent,
+        linkCount
+    ))
+    {
+        _puts(
+            "\r\nBROWSE: unable to load page\r\n"
+        );
+
+        return 0x00FF;
+    }
 
     uint8_t historyCount =
         0;
 
-    bool needLoad =
-        true;
+    int selectedLink =
+        browserFirstSelectableLink(
+            linkCount
+        );
 
-    char *command =
-        browserCommand;
+    uint16_t topLine =
+        0;
+
+    browserEnsureSelectionVisible(
+        selectedLink,
+        topLine
+    );
 
     while (true)
     {
-        if (needLoad)
+        browserRender(
+            topLine,
+            selectedLink,
+            linkCount
+        );
+
+        CardputerBrowserInput input =
+            browserReadInput();
+
+        if (
+            input.key ==
+                BROWSER_KEY_UP ||
+            (
+                input.key ==
+                    BROWSER_KEY_CHARACTER &&
+                (
+                    input.character == 'k' ||
+                    input.character == 'K'
+                )
+            )
+        )
         {
-            if (!browserFetchPage(
-                current,
-                links,
-                linkCount
-            ))
+            if (
+                linkCount &&
+                selectedLink > 0
+            )
             {
-                _puts(
-                    "BROWSE: load failed. B=back G=go Q=quit\r\n"
+                selectedLink--;
+
+                browserEnsureSelectionVisible(
+                    selectedLink,
+                    topLine
                 );
             }
 
-            needLoad =
-                false;
-        }
-
-        if (!cardputerNetworkReadLine(
-            "browse> ",
-            command,
-            BROWSER_URL_MAX + 16
-        ))
-        {
-            break;
-        }
-
-        char *text =
-            wifiTrim(
-                command
-            );
-
-        if (!text[0])
-        {
             continue;
         }
 
-        uint8_t linkNumber;
-
-        if (browserParseLinkNumber(
-            text,
-            linkNumber
-        ))
+        if (
+            input.key ==
+                BROWSER_KEY_DOWN ||
+            (
+                input.key ==
+                    BROWSER_KEY_CHARACTER &&
+                (
+                    input.character == 'j' ||
+                    input.character == 'J'
+                )
+            )
+        )
         {
             if (
-                linkNumber < 1 ||
-                linkNumber >
+                linkCount &&
+                selectedLink >= 0 &&
+                selectedLink + 1 <
                     linkCount
             )
             {
-                _puts(
-                    "BROWSE: no such link\r\n"
+                selectedLink++;
+
+                browserEnsureSelectionVisible(
+                    selectedLink,
+                    topLine
                 );
-
-                continue;
             }
-
-            if (
-                historyCount <
-                    BROWSER_HISTORY_MAX
+            else if (
+                linkCount &&
+                selectedLink < 0
             )
             {
-                strncpy(
-                    history[
-                        historyCount++
-                    ],
-                    current,
-                    BROWSER_URL_MAX - 1
-                );
-
-                history[
-                    historyCount - 1
-                ][
-                    BROWSER_URL_MAX - 1
-                ] = 0;
-            }
-            else
-            {
-                for (
-                    uint8_t index = 1;
-                    index <
-                        BROWSER_HISTORY_MAX;
-                    index++
-                )
-                {
-                    strcpy(
-                        history[
-                            index - 1
-                        ],
-                        history[
-                            index
-                        ]
+                selectedLink =
+                    browserFirstSelectableLink(
+                        linkCount
                     );
-                }
 
-                strncpy(
-                    history[
-                        BROWSER_HISTORY_MAX - 1
-                    ],
-                    current,
-                    BROWSER_URL_MAX - 1
+                browserEnsureSelectionVisible(
+                    selectedLink,
+                    topLine
                 );
-
-                history[
-                    BROWSER_HISTORY_MAX - 1
-                ][
-                    BROWSER_URL_MAX - 1
-                ] = 0;
             }
-
-            strncpy(
-                current,
-                links[
-                    linkNumber - 1
-                ].url,
-                BROWSER_URL_MAX - 1
-            );
-
-            current[
-                BROWSER_URL_MAX - 1
-            ] = 0;
-
-            needLoad =
-                true;
 
             continue;
         }
 
         if (
-            (
-                text[0] == 'Q' ||
-                text[0] == 'q'
-            ) &&
-            text[1] == 0
+            input.key ==
+                BROWSER_KEY_RIGHT ||
+            input.key ==
+                BROWSER_KEY_ENTER
         )
+        {
+            if (browserFollowLink(
+                selectedLink,
+                historyCount,
+                linkCount,
+                topLine
+            ))
+            {
+                selectedLink =
+                    browserFirstSelectableLink(
+                        linkCount
+                    );
+
+                browserEnsureSelectionVisible(
+                    selectedLink,
+                    topLine
+                );
+            }
+            else
+            {
+                browserMessageScreen(
+                    "BROWSE",
+                    "Unable to follow selected link."
+                );
+            }
+
+            continue;
+        }
+
+        if (
+            input.key ==
+                BROWSER_KEY_LEFT ||
+            input.key ==
+                BROWSER_KEY_BACKSPACE
+        )
+        {
+            if (!browserGoBack(
+                historyCount,
+                linkCount,
+                selectedLink,
+                topLine
+            ))
+            {
+                browserMessageScreen(
+                    "BROWSE",
+                    "No previous page."
+                );
+            }
+
+            continue;
+        }
+
+        if (
+            input.key ==
+                BROWSER_KEY_PAGE_DOWN ||
+            (
+                input.key ==
+                    BROWSER_KEY_CHARACTER &&
+                input.character == ' '
+            )
+        )
+        {
+            if (
+                topLine +
+                    BROWSER_VIEW_ROWS <
+                browserPageLineCount
+            )
+            {
+                topLine +=
+                    BROWSER_VIEW_ROWS - 1;
+
+                browserClampViewport(
+                    topLine
+                );
+
+                selectedLink =
+                    browserLinkOnOrAfterLine(
+                        linkCount,
+                        topLine
+                    );
+            }
+
+            continue;
+        }
+
+        if (
+            input.key ==
+                BROWSER_KEY_PAGE_UP ||
+            (
+                input.key ==
+                    BROWSER_KEY_CHARACTER &&
+                input.character == '-'
+            )
+        )
+        {
+            if (
+                topLine >=
+                    BROWSER_VIEW_ROWS - 1
+            )
+            {
+                topLine -=
+                    BROWSER_VIEW_ROWS - 1;
+            }
+            else
+            {
+                topLine = 0;
+            }
+
+            selectedLink =
+                browserLinkOnOrAfterLine(
+                    linkCount,
+                    topLine
+                );
+
+            continue;
+        }
+
+        if (
+            input.key ==
+                BROWSER_KEY_HOME
+        )
+        {
+            topLine = 0;
+
+            selectedLink =
+                browserLinkOnOrAfterLine(
+                    linkCount,
+                    topLine
+                );
+
+            continue;
+        }
+
+        if (
+            input.key ==
+                BROWSER_KEY_END
+        )
+        {
+            topLine =
+                browserPageLineCount >
+                    BROWSER_VIEW_ROWS
+                    ? browserPageLineCount -
+                        BROWSER_VIEW_ROWS
+                    : 0;
+
+            selectedLink =
+                browserLinkOnOrAfterLine(
+                    linkCount,
+                    topLine
+                );
+
+            continue;
+        }
+
+        if (
+            input.key !=
+                BROWSER_KEY_CHARACTER
+        )
+        {
+            continue;
+        }
+
+        uint8_t command =
+            (uint8_t)toupper(
+                input.character
+            );
+
+        if (command == 'Q')
         {
             break;
         }
 
-        if (
-            (
-                text[0] == 'B' ||
-                text[0] == 'b'
-            ) &&
-            text[1] == 0
-        )
-        {
-            if (!historyCount)
-            {
-                _puts(
-                    "BROWSE: history is empty\r\n"
-                );
-
-                continue;
-            }
-
-            strcpy(
-                current,
-                history[
-                    --historyCount
-                ]
-            );
-
-            needLoad =
-                true;
-
-            continue;
-        }
-
-        if (
-            (
-                text[0] == 'R' ||
-                text[0] == 'r'
-            ) &&
-            text[1] == 0
-        )
-        {
-            needLoad =
-                true;
-
-            continue;
-        }
-
-        if (
-            (
-                text[0] == 'L' ||
-                text[0] == 'l'
-            ) &&
-            text[1] == 0
-        )
-        {
-            browserListLinks(
-                links,
-                linkCount
-            );
-
-            continue;
-        }
-
-        if (
-            (
-                text[0] == 'H' ||
-                text[0] == 'h' ||
-                text[0] == '?'
-            ) &&
-            text[1] == 0
-        )
+        if (command == 'H' ||
+            input.character == '?')
         {
             browserHelp();
             continue;
         }
 
-        bool browseCommand =
-            strncasecmp(
-                text,
-                "BROWSE",
-                6
-            ) == 0 &&
-            isspace(
-                (unsigned char)text[6]
-            );
-
-        bool directUrl =
-            strncasecmp(
-                text,
-                "http://",
-                7
-            ) == 0 ||
-            strncasecmp(
-                text,
-                "https://",
-                8
-            ) == 0;
-
-        if (
-            (
-                (
-                    text[0] == 'G' ||
-                    text[0] == 'g'
-                ) &&
-                isspace(
-                    (unsigned char)text[1]
-                )
-            ) ||
-            browseCommand ||
-            directUrl
-        )
+        if (command == 'L')
         {
-            char *url =
-                directUrl
-                    ? text
-                    : browseCommand
-                        ? wifiTrim(
-                            text + 6
-                          )
-                        : wifiTrim(
-                            text + 2
-                          );
-
-            if (!url[0])
-            {
-                _puts(
-                    "Usage: G url, BROWSE url, or http://...\r\n"
-                );
-
-                continue;
-            }
-
-            char *resolved =
-                browserResolved;
-
-            bool okay =
-                browserResolveUrl(
-                    current,
-                    url,
-                    resolved,
-                    BROWSER_URL_MAX
-                );
-
-            if (!okay)
-            {
-                if (
-                    strncasecmp(
-                        url,
-                        "http://",
-                        7
-                    ) == 0 ||
-                    strncasecmp(
-                        url,
-                        "https://",
-                        8
-                    ) == 0
-                )
-                {
-                    if (
-                        strlen(url) <
-                            BROWSER_URL_MAX
-                    )
-                    {
-                        strcpy(
-                            resolved,
-                            url
-                        );
-
-                        okay =
-                            true;
-                    }
-                }
-            }
-
-            if (!okay)
-            {
-                _puts(
-                    "BROWSE: invalid URL\r\n"
-                );
-
-                continue;
-            }
-
-            if (
-                historyCount <
-                    BROWSER_HISTORY_MAX
-            )
-            {
-                strncpy(
-                    history[
-                        historyCount++
-                    ],
-                    current,
-                    BROWSER_URL_MAX - 1
-                );
-
-                history[
-                    historyCount - 1
-                ][
-                    BROWSER_URL_MAX - 1
-                ] = 0;
-            }
-
-            strcpy(
-                current,
-                resolved
+            browserShowSelectedUrl(
+                selectedLink,
+                linkCount
             );
-
-            needLoad =
-                true;
 
             continue;
         }
 
-        _puts(
-            "BROWSE: number, URL, BROWSE url, B, G url, R, L, H, Q\r\n"
-        );
+        if (command == 'D')
+        {
+            browserDownloadSelected(
+                selectedLink,
+                linkCount
+            );
+
+            continue;
+        }
+
+        if (command == 'R')
+        {
+            if (!browserFetchPage(
+                browserCurrent,
+                linkCount
+            ))
+            {
+                browserMessageScreen(
+                    "BROWSE",
+                    "Reload failed."
+                );
+
+                continue;
+            }
+
+            selectedLink =
+                browserFirstSelectableLink(
+                    linkCount
+                );
+
+            topLine = 0;
+
+            browserEnsureSelectionVisible(
+                selectedLink,
+                topLine
+            );
+
+            continue;
+        }
+
+        if (command == 'G')
+        {
+            if (!browserPromptUrl(
+                browserResolved,
+                sizeof(browserResolved)
+            ))
+            {
+                continue;
+            }
+
+            browserPushHistory(
+                browserCurrent,
+                historyCount
+            );
+
+            if (!browserFetchPage(
+                browserResolved,
+                linkCount
+            ))
+            {
+                if (historyCount)
+                {
+                    historyCount--;
+                }
+
+                browserMessageScreen(
+                    "BROWSE",
+                    "Unable to load URL."
+                );
+
+                continue;
+            }
+
+            strcpy(
+                browserCurrent,
+                browserResolved
+            );
+
+            selectedLink =
+                browserFirstSelectableLink(
+                    linkCount
+                );
+
+            topLine = 0;
+
+            browserEnsureSelectionVisible(
+                selectedLink,
+                topLine
+            );
+
+            continue;
+        }
     }
 
     _puts(
-        "\r\nBROWSE: exit\r\n"
+        "\x1B[0m\x1B[2J\x1B[H"
+        "BROWSE: exit\r\n"
     );
 
     return 0;
