@@ -1461,17 +1461,29 @@ static void ftpHandleStore(
     bool okay =
         true;
 
-    while (
-        ftpActive &&
-        ftpDataClient &&
-        ftpDataClient.connected()
-    )
+    /*
+     * Do not use connected() as the loop condition.
+     *
+     * On ESP32 a TCP peer may close immediately after sending the final
+     * data segment. connected() can then become false while unread bytes
+     * are still buffered locally. If we stop at that point the tail of the
+     * uploaded file is silently lost.
+     *
+     * Keep draining available() data after the peer has closed, and finish
+     * only when the socket is disconnected AND the receive buffer is empty.
+     */
+    while (ftpActive)
     {
         int available =
             ftpDataClient.available();
 
         if (available <= 0)
         {
+            if (!ftpDataClient.connected())
+            {
+                break;
+            }
+
             if (!ftpTransferCanContinue())
             {
                 okay =
