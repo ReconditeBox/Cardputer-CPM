@@ -7137,7 +7137,10 @@ uint16 cardputerTelnetBdos(
         false;
 
     while (
-        client.connected() &&
+        (
+            client.connected() ||
+            client.available()
+        ) &&
         !done
     )
     {
