@@ -148,6 +148,36 @@ char pun_file[17] = {SYSTEM_DRIVE_LETTER, FOLDERCHAR, '0', FOLDERCHAR, 'P', 'U',
 
 #ifdef USE_LST
 char lst_file[17] = {SYSTEM_DRIVE_LETTER, FOLDERCHAR, '0', FOLDERCHAR, 'L', 'S', 'T', '.', 'T', 'X', 'T', 0};
+
+/*
+ * Common LST: backend for both BDOS function 5 and BIOS LIST.
+ *
+ * The first output byte of a Cardputer session creates/truncates
+ * C/0/LST.TXT.  The handle then stays open so all subsequent printer
+ * output in that session is collected into the same virtual print file.
+ * Flush at line/page boundaries so completed text becomes durable
+ * without forcing an SD-card flush for every single character.
+ */
+static void _ListWrite(uint8 ch) {
+    if (!lst_open) {
+        lst_dev = _sys_fopen_w((uint8 *)lst_file);
+
+        if (lst_dev) {
+            lst_open = TRUE;
+        }
+    }
+
+    if (lst_dev) {
+        _sys_fputc(ch, lst_dev);
+
+        if (
+            ch == '\n' ||
+            ch == '\f'
+        ) {
+            _sys_fflush(lst_dev);
+        }
+    }
+}
 #endif // ifdef USE_LST
 
 #ifdef PROFILE
@@ -580,6 +610,11 @@ void _Bios(void) {
         break;
     }
     case B_LIST: { // 5 - List output
+    #ifdef USE_LST
+        _ListWrite(
+            LOW_REGISTER(BC)
+        );
+    #endif // ifdef USE_LST
         break;
     }
     case B_AUXOUT: { // 6 - Aux/Punch output
@@ -810,12 +845,9 @@ void _Bdos(void) {
      */
     case L_WRITE: {
     #ifdef USE_LST
-        if (!lst_open) {
-            lst_dev = _sys_fopen_w((uint8 *)lst_file);
-            lst_open = TRUE;
-        }
-        if (lst_dev)
-            _sys_fputc(LOW_REGISTER(DE), lst_dev);
+        _ListWrite(
+            LOW_REGISTER(DE)
+        );
     #endif // ifdef USE_LST
         break;
     }
