@@ -1377,17 +1377,26 @@ uint16 cardputerFtpClientBdos(
             continue;
         }
 
-        char *parts[4];
+        char *parts[8];
 
         int partCount =
             wifiTokenize(
                 commandText,
                 parts,
-                4
+                8
             );
 
         if (partCount <= 0)
         {
+            continue;
+        }
+
+        if (partCount > 8)
+        {
+            _puts(
+                "FTP: too many command arguments\r\n"
+            );
+
             continue;
         }
 
