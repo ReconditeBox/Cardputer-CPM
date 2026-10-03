@@ -657,7 +657,7 @@ Ctrl-]
 
 or physical **Fn + =**.
 
-Outbound `TELNET` cannot run while `TELNETD` or `FTPD` is active.
+Outbound `TELNET` may run while `TELNETD` is active, including from an inbound Telnet console session. It remains unavailable while `FTPD` is active.
 
 ---
 
