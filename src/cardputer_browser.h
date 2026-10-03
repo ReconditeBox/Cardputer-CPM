@@ -2932,6 +2932,11 @@ static CardputerBrowserInput browserReadInput()
 }
 
 
+static void browserLoadingScreen(
+    const char *url
+);
+
+
 static void browserPushHistory(
     const char *url,
     uint8_t &historyCount
