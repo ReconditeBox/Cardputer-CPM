@@ -321,7 +321,9 @@ Changes are written to the matching numbered entry in `/WIFI.CFG` and WiFi is re
 
 `IFCONFIG DHCP` removes the active entry's `IPn`, `MASKn`, `GWn` and `DNSn` lines, restoring normal DHCP on this and subsequent boots.
 
-Changing the IP address while Telnet owns `CON:` returns the console to LOCAL before WiFi is restarted. Reconnect the Telnet client to the new address and run `TELNETD` again if required.
+`IFCONFIG` is deliberately unavailable when CP/M `CON:` is routed to TELNET. Network administration must be performed from LOCAL, USB, or BOTH console mode.
+
+A bare `IFCONFIG` may still display the current status while a Telnet client is connected but does not own `CON:`. However, `IFCONFIG DHCP` and static-address changes are refused while **any** Telnet client connection is active. Disconnect the client first, then change the network settings.
 
 If WiFi is offline, bare `IFCONFIG` reports that state. Address changes require a currently connected network so the firmware knows which numbered `WIFI.CFG` entry to update.
 
@@ -357,7 +359,11 @@ To use it:
 
 Only one Telnet client is accepted at a time.
 
-If the Telnet client disconnects while it owns `CON:`, the firmware automatically returns to LOCAL mode.
+When a Telnet client connects or disconnects, the event is announced on the CP/M console.
+
+If the Telnet client disconnects while it owns `CON:`, the firmware automatically returns to LOCAL mode and announces the disconnect locally.
+
+Returning `CON:` from TELNET to LOCAL also actively closes the Telnet client connection. This applies whether LOCAL is selected with `LOCAL.COM` or with the physical **Fn + =** emergency key.
 
 The physical **Fn + =** key combination always forces LOCAL mode, including while TELNET owns the console.
 
