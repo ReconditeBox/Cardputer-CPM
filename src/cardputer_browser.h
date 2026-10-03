@@ -2677,6 +2677,36 @@ struct CardputerBrowserInput
 };
 
 
+static bool browserReadEscapeByte(
+    uint8_t &value
+)
+{
+    uint32_t started =
+        millis();
+
+    while (!_chready())
+    {
+        if (
+            (uint32_t)(
+                millis() -
+                started
+            ) >
+                100
+        )
+        {
+            return false;
+        }
+
+        delay(1);
+    }
+
+    value =
+        _getcon();
+
+    return true;
+}
+
+
 static CardputerBrowserInput browserReadInput()
 {
     CardputerBrowserInput input =
@@ -2718,15 +2748,30 @@ static CardputerBrowserInput browserReadInput()
         return input;
     }
 
-    uint8_t second =
-        _getcon();
+    uint8_t second = 0;
+
+    if (!browserReadEscapeByte(
+        second
+    ))
+    {
+        input.character =
+            0x1B;
+
+        return input;
+    }
 
     if (
         second == '['
     )
     {
-        uint8_t third =
-            _getcon();
+        uint8_t third = 0;
+
+        if (!browserReadEscapeByte(
+            third
+        ))
+        {
+            return input;
+        }
 
         if (third == 'A')
         {
@@ -2772,8 +2817,14 @@ static CardputerBrowserInput browserReadInput()
 
             while (true)
             {
-                uint8_t next =
-                    _getcon();
+                uint8_t next = 0;
+
+                if (!browserReadEscapeByte(
+                    next
+                ))
+                {
+                    break;
+                }
 
                 if (
                     next >= '0' &&
@@ -2834,8 +2885,14 @@ static CardputerBrowserInput browserReadInput()
         second == 'O'
     )
     {
-        uint8_t third =
-            _getcon();
+        uint8_t third = 0;
+
+        if (!browserReadEscapeByte(
+            third
+        ))
+        {
+            return input;
+        }
 
         if (third == 'A')
         {
@@ -2968,6 +3025,10 @@ static bool browserGoBack(
 
     historyCount--;
 
+    browserLoadingScreen(
+        previous
+    );
+
     if (!browserFetchPage(
         previous,
         linkCount
@@ -3030,6 +3091,10 @@ static bool browserFollowLink(
         historyCount
     );
 
+    browserLoadingScreen(
+        target
+    );
+
     if (!browserFetchPage(
         target,
         linkCount
@@ -3051,6 +3116,32 @@ static bool browserFollowLink(
     topLine = 0;
 
     return true;
+}
+
+
+static void browserLoadingScreen(
+    const char *url
+)
+{
+    _puts(
+        "\x1B[2J\x1B[H"
+        "\x1B[7m"
+        "BROWSE loading"
+        "\x1B[0m\r\n\r\n"
+    );
+
+    if (url)
+    {
+        _puts(
+            url
+        );
+    }
+
+    _puts(
+        "\r\n"
+    );
+
+    terminalMaybeRefresh();
 }
 
 
@@ -3426,6 +3517,10 @@ uint16 cardputerBrowserBdos(
     uint8_t linkCount =
         0;
 
+    browserLoadingScreen(
+        browserCurrent
+    );
+
     if (!browserFetchPage(
         browserCurrent,
         linkCount
@@ -3747,6 +3842,10 @@ uint16 cardputerBrowserBdos(
 
         if (command == 'R')
         {
+            browserLoadingScreen(
+                browserCurrent
+            );
+
             if (!browserFetchPage(
                 browserCurrent,
                 linkCount
@@ -3788,6 +3887,10 @@ uint16 cardputerBrowserBdos(
             browserPushHistory(
                 browserCurrent,
                 historyCount
+            );
+
+            browserLoadingScreen(
+                browserResolved
             );
 
             if (!browserFetchPage(
