@@ -54,6 +54,9 @@ struct CardputerBrowserParser
 
     bool pendingSpace;
     uint8_t column;
+
+    uint8_t pageLines;
+    bool pagerStopped;
 };
 
 
@@ -80,6 +83,73 @@ static void browserNewline(
 );
 
 
+static void browserPagerAfterLine(
+    CardputerBrowserParser &parser
+)
+{
+    if (parser.pagerStopped)
+    {
+        return;
+    }
+
+    parser.pageLines++;
+
+    if (
+        parser.pageLines <
+        18
+    )
+    {
+        return;
+    }
+
+    _puts(
+        "-- More --  SPACE/ENTER=next  Q=stop display"
+    );
+
+    uint8_t ch =
+        _getcon();
+
+    _puts(
+        "\r                                             \r"
+    );
+
+    parser.pageLines =
+        0;
+
+    if (
+        ch == 'q' ||
+        ch == 'Q' ||
+        ch == 0x03
+    )
+    {
+        parser.pagerStopped =
+            true;
+    }
+}
+
+
+static void browserEmitNewline(
+    CardputerBrowserParser &parser
+)
+{
+    parser.column =
+        0;
+
+    if (parser.pagerStopped)
+    {
+        return;
+    }
+
+    _puts(
+        "\r\n"
+    );
+
+    browserPagerAfterLine(
+        parser
+    );
+}
+
+
 static void browserFlushWord(
     CardputerBrowserParser &parser
 )
@@ -104,12 +174,16 @@ static void browserFlushWord(
                 BROWSER_LINE_WIDTH
         )
         {
-            _puts(
-                "\r\n"
+            browserEmitNewline(
+                parser
             );
 
-            parser.column =
-                0;
+            if (parser.pagerStopped)
+            {
+                parser.wordLength = 0;
+                parser.pendingSpace = false;
+                return;
+            }
         }
         else
         {
@@ -125,12 +199,9 @@ static void browserFlushWord(
             BROWSER_LINE_WIDTH
     )
     {
-        _puts(
-            "\r\n"
+        browserEmitNewline(
+            parser
         );
-
-        parser.column =
-            0;
     }
 
     for (
@@ -144,12 +215,16 @@ static void browserFlushWord(
                 BROWSER_LINE_WIDTH
         )
         {
-            _puts(
-                "\r\n"
+            browserEmitNewline(
+                parser
             );
 
-            parser.column =
-                0;
+            if (parser.pagerStopped)
+            {
+                parser.wordLength = 0;
+                parser.pendingSpace = false;
+                return;
+            }
         }
 
         _putcon(
@@ -194,7 +269,10 @@ static void browserNewline(
     parser.pendingSpace =
         false;
 
-    if (parser.column)
+    if (
+        parser.column &&
+        !parser.pagerStopped
+    )
     {
         _puts(
             "\r\n"
@@ -214,12 +292,9 @@ static void browserBlankLine(
         parser
     );
 
-    _puts(
-        "\r\n"
+    browserEmitNewline(
+        parser
     );
-
-    parser.column =
-        0;
 }
 
 
@@ -228,6 +303,11 @@ static void browserFeedVisibleCharacter(
     char ch
 )
 {
+    if (parser.pagerStopped)
+    {
+        return;
+    }
+
     if (
         ch == '\r' ||
         ch == '\n' ||
