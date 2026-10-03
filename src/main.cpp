@@ -82,6 +82,9 @@ static WiFiServer telnetServer(
 
 static WiFiClient telnetClient;
 
+static IPAddress telnetRemoteIP;
+static bool telnetRemoteIPValid = false;
+
 static bool telnetServerStarted = false;
 static bool lastTelnetWasCR = false;
 
@@ -1320,6 +1323,17 @@ static void showTelnetStatus()
         M5Cardputer.Display.println(
             "Telnet client connected"
         );
+
+        if (telnetRemoteIPValid)
+        {
+            M5Cardputer.Display.printf(
+                "Client: %u.%u.%u.%u\n",
+                telnetRemoteIP[0],
+                telnetRemoteIP[1],
+                telnetRemoteIP[2],
+                telnetRemoteIP[3]
+            );
+        }
     }
     else
     {
@@ -1434,11 +1448,27 @@ static void setCardConsoleMode(
 
         if (closeTelnetClient)
         {
-            _puts(
-                "\r\n"
-                "[TELNET client disconnected]"
-                "\r\n"
+            char peer[32];
+            char announcement[80];
+
+            telnetFormatRemoteIP(
+                peer,
+                sizeof(peer)
             );
+
+            snprintf(
+                announcement,
+                sizeof(announcement),
+                "\r\n[TELNET client disconnected from %s]\r\n",
+                peer
+            );
+
+            _puts(
+                announcement
+            );
+
+            telnetRemoteIPValid =
+                false;
         }
     }
     else if (
@@ -2839,9 +2869,51 @@ static void telnetResetInputState()
 }
 
 
+static void telnetFormatRemoteIP(
+    char *buffer,
+    size_t bufferSize
+)
+{
+    if (
+        !buffer ||
+        bufferSize == 0
+    )
+    {
+        return;
+    }
+
+    if (!telnetRemoteIPValid)
+    {
+        snprintf(
+            buffer,
+            bufferSize,
+            "unknown"
+        );
+
+        return;
+    }
+
+    snprintf(
+        buffer,
+        bufferSize,
+        "%u.%u.%u.%u",
+        telnetRemoteIP[0],
+        telnetRemoteIP[1],
+        telnetRemoteIP[2],
+        telnetRemoteIP[3]
+    );
+}
+
+
 static void telnetClientConnected()
 {
     telnetResetInputState();
+
+    telnetRemoteIP =
+        telnetClient.remoteIP();
+
+    telnetRemoteIPValid =
+        true;
 
     /*
      * Tell the client that the server performs echoing
@@ -2887,10 +2959,23 @@ static void telnetClientConnected()
         );
     }
 
+    char peer[32];
+    char announcement[80];
+
+    telnetFormatRemoteIP(
+        peer,
+        sizeof(peer)
+    );
+
+    snprintf(
+        announcement,
+        sizeof(announcement),
+        "\r\n[TELNET client connected from %s]\r\n",
+        peer
+    );
+
     _puts(
-        "\r\n"
-        "[TELNET client connected]"
-        "\r\n"
+        announcement
     );
 }
 
@@ -2922,6 +3007,9 @@ static void telnetServiceConnection()
         else
         {
             telnetClient.stop();
+
+            telnetRemoteIPValid =
+                false;
 
             telnetClient =
                 incoming;
@@ -2958,11 +3046,27 @@ static void telnetServiceConnection()
             );
         }
 
-        _puts(
-            "\r\n"
-            "[TELNET client disconnected]"
-            "\r\n"
+        char peer[32];
+        char announcement[80];
+
+        telnetFormatRemoteIP(
+            peer,
+            sizeof(peer)
         );
+
+        snprintf(
+            announcement,
+            sizeof(announcement),
+            "\r\n[TELNET client disconnected from %s]\r\n",
+            peer
+        );
+
+        _puts(
+            announcement
+        );
+
+        telnetRemoteIPValid =
+            false;
     }
 }
 
