@@ -30,6 +30,8 @@ Current functionality includes:
 - EXT-header auxiliary UART at 115200 8N1
 - built-in `AUX` routing command
 - built-in `BATTERY` status command
+- persistent CP/M R/O, SYS and archive file attributes
+- FTP enforcement of CP/M read-only files
 - optional PNG boot splash
 - physical key to skip WiFi connection attempts
 - physical **Fn + =** emergency return to LOCAL mode
@@ -213,6 +215,33 @@ See [Removable A: and B: media](#removable-a-and-b-media).
 The FTP server is intentionally restricted to **F:**.
 
 That makes F: a convenient transfer area for adding or retrieving CP/M programs over WiFi without removing the SD card. FTP user selection maps directly to F: user areas 0 through 15.
+
+### CP/M file attributes
+
+Cardputer-CPM persists the standard CP/M file attributes:
+
+- **R/O** — read-only
+- **SYS** — system
+- **Archive** — unchanged since backup
+
+The attributes are stored in the underlying FAT directory metadata, so they survive Cardputer restarts and removing/reinserting the SD card.
+
+Standard CP/M 2.2 `STAT.COM` can set the user-visible attributes in the normal way:
+
+```text
+STAT FILENAME.TYP $R/O
+STAT FILENAME.TYP $R/W
+STAT FILENAME.TYP $SYS
+STAT FILENAME.TYP $DIR
+```
+
+Ambiguous filenames such as `*.COM` are also supported.
+
+R/O files cannot be written, deleted or renamed until changed back to R/W.
+
+SYS files are omitted by the built-in `DIR` command while remaining visible to attribute-aware software such as `STAT`.
+
+The CP/M archive flag is mapped to the FAT archive flag with the required inverse meaning: a successful write marks the FAT file as changed and therefore clears CP/M's archived state.
 
 ---
 
@@ -698,6 +727,8 @@ SIZE
 PASV
 EPSV
 ```
+
+FTPD honours CP/M read-only protection. A file marked R/O cannot be overwritten with `STOR`, appended with `APPE`, deleted with `DELE`, or renamed with `RNFR/RNTO`. `LIST` and `MLSD` also report the file as read-only.
 
 Active-mode FTP (`PORT`/`EPRT`) is not supported.
 
