@@ -3748,8 +3748,14 @@ uint16 cardputerSetdefBdos(
  *
  * SSID1=First Network
  * PASS1=first password
- * SSID2=Second Network
- * PASS2=second password
+ * IP1=192.168.1.50
+ * MASK1=255.255.255.0
+ * GW1=192.168.1.1
+ * DNS1=192.168.1.1
+ *
+ * IP/MASK/GW are optional as a group. If absent, the
+ * network uses DHCP. DNS is optional for static config;
+ * the gateway is used as DNS when DNSn is omitted.
  *
  * Networks are tried in numeric order.
  * Missing file / failed connections are non-fatal.
@@ -3757,9 +3763,12 @@ uint16 cardputerSetdefBdos(
  */
 
 #define WIFI_CONFIG_FILE "/WIFI.CFG"
+#define WIFI_CONFIG_TEMP_FILE "/WIFI.TMP"
+#define WIFI_CONFIG_BACKUP_FILE "/WIFI.BAK"
 #define WIFI_MAX_NETWORKS 10
 #define WIFI_SSID_SIZE 33
 #define WIFI_PASS_SIZE 65
+#define WIFI_IP_SIZE 16
 #define WIFI_LINE_SIZE 160
 #define WIFI_CONNECT_TIMEOUT_MS 10000
 
@@ -3768,7 +3777,15 @@ struct WifiConfigEntry
     bool used;
     char ssid[WIFI_SSID_SIZE];
     char password[WIFI_PASS_SIZE];
+    char ip[WIFI_IP_SIZE];
+    char mask[WIFI_IP_SIZE];
+    char gateway[WIFI_IP_SIZE];
+    char dns[WIFI_IP_SIZE];
 };
+
+
+static int wifiActiveConfigIndex =
+    -1;
 
 
 static char *wifiTrim(char *text)
@@ -3859,7 +3876,7 @@ static bool wifiReadLine(
 
     /*
      * Ignore an overlong line completely rather than
-     * parsing a truncated password or SSID.
+     * parsing a truncated password, SSID or address.
      */
     if (overflow)
     {
@@ -3925,6 +3942,38 @@ static int wifiConfigIndex(
     }
 
     return value - 1;
+}
+
+
+static void wifiCopyValue(
+    char *destination,
+    size_t destinationSize,
+    const char *value
+)
+{
+    if (
+        !destination ||
+        destinationSize == 0
+    )
+    {
+        return;
+    }
+
+    if (!value)
+    {
+        destination[0] = 0;
+        return;
+    }
+
+    strncpy(
+        destination,
+        value,
+        destinationSize - 1
+    );
+
+    destination[
+        destinationSize - 1
+    ] = 0;
 }
 
 
@@ -4001,15 +4050,11 @@ static bool wifiLoadConfig(
 
         if (index >= 0)
         {
-            strncpy(
+            wifiCopyValue(
                 entries[index].ssid,
-                value,
-                WIFI_SSID_SIZE - 1
+                sizeof(entries[index].ssid),
+                value
             );
-
-            entries[index].ssid[
-                WIFI_SSID_SIZE - 1
-            ] = 0;
 
             entries[index].used =
                 entries[index].ssid[0] != 0;
@@ -4025,15 +4070,79 @@ static bool wifiLoadConfig(
 
         if (index >= 0)
         {
-            strncpy(
+            wifiCopyValue(
                 entries[index].password,
-                value,
-                WIFI_PASS_SIZE - 1
+                sizeof(entries[index].password),
+                value
             );
 
-            entries[index].password[
-                WIFI_PASS_SIZE - 1
-            ] = 0;
+            continue;
+        }
+
+        index =
+            wifiConfigIndex(
+                key,
+                "MASK"
+            );
+
+        if (index >= 0)
+        {
+            wifiCopyValue(
+                entries[index].mask,
+                sizeof(entries[index].mask),
+                value
+            );
+
+            continue;
+        }
+
+        index =
+            wifiConfigIndex(
+                key,
+                "DNS"
+            );
+
+        if (index >= 0)
+        {
+            wifiCopyValue(
+                entries[index].dns,
+                sizeof(entries[index].dns),
+                value
+            );
+
+            continue;
+        }
+
+        index =
+            wifiConfigIndex(
+                key,
+                "GW"
+            );
+
+        if (index >= 0)
+        {
+            wifiCopyValue(
+                entries[index].gateway,
+                sizeof(entries[index].gateway),
+                value
+            );
+
+            continue;
+        }
+
+        index =
+            wifiConfigIndex(
+                key,
+                "IP"
+            );
+
+        if (index >= 0)
+        {
+            wifiCopyValue(
+                entries[index].ip,
+                sizeof(entries[index].ip),
+                value
+            );
         }
     }
 
@@ -4043,11 +4152,1094 @@ static bool wifiLoadConfig(
 }
 
 
+static bool wifiEntryHasAnyStaticAddress(
+    const WifiConfigEntry &entry
+)
+{
+    return (
+        entry.ip[0] ||
+        entry.mask[0] ||
+        entry.gateway[0] ||
+        entry.dns[0]
+    );
+}
+
+
+static bool wifiEntryHasStaticAddress(
+    const WifiConfigEntry &entry
+)
+{
+    return (
+        entry.ip[0] &&
+        entry.mask[0] &&
+        entry.gateway[0]
+    );
+}
+
+
+static bool wifiParseAddress(
+    const char *text,
+    IPAddress &address
+)
+{
+    if (
+        !text ||
+        !text[0]
+    )
+    {
+        return false;
+    }
+
+    return address.fromString(
+        text
+    );
+}
+
+
+static bool wifiApplyAddressConfig(
+    const WifiConfigEntry &entry
+)
+{
+    if (!wifiEntryHasAnyStaticAddress(entry))
+    {
+        /*
+         * INADDR_NONE tells Arduino-ESP32 to start the DHCP client.
+         */
+        return WiFi.config(
+            INADDR_NONE,
+            INADDR_NONE,
+            INADDR_NONE
+        );
+    }
+
+    if (!wifiEntryHasStaticAddress(entry))
+    {
+        return false;
+    }
+
+    IPAddress ip;
+    IPAddress mask;
+    IPAddress gateway;
+    IPAddress dns;
+
+    if (
+        !wifiParseAddress(
+            entry.ip,
+            ip
+        ) ||
+        !wifiParseAddress(
+            entry.mask,
+            mask
+        ) ||
+        !wifiParseAddress(
+            entry.gateway,
+            gateway
+        )
+    )
+    {
+        return false;
+    }
+
+    if (entry.dns[0])
+    {
+        if (!wifiParseAddress(
+            entry.dns,
+            dns
+        ))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        dns =
+            gateway;
+    }
+
+    return WiFi.config(
+        ip,
+        gateway,
+        mask,
+        dns
+    );
+}
+
+
+static void wifiPrintAddress(
+    const char *label,
+    const IPAddress &address
+)
+{
+    char line[64];
+
+    snprintf(
+        line,
+        sizeof(line),
+        "%-6s %u.%u.%u.%u\r\n",
+        label,
+        address[0],
+        address[1],
+        address[2],
+        address[3]
+    );
+
+    _puts(
+        line
+    );
+}
+
+
+static int wifiFindActiveConfigIndex(
+    WifiConfigEntry *entries
+)
+{
+    if (
+        WiFi.status() !=
+        WL_CONNECTED
+    )
+    {
+        return -1;
+    }
+
+    String activeSsid =
+        WiFi.SSID();
+
+    if (
+        wifiActiveConfigIndex >= 0 &&
+        wifiActiveConfigIndex <
+            WIFI_MAX_NETWORKS &&
+        entries[
+            wifiActiveConfigIndex
+        ].used &&
+        activeSsid.equals(
+            entries[
+                wifiActiveConfigIndex
+            ].ssid
+        )
+    )
+    {
+        return wifiActiveConfigIndex;
+    }
+
+    for (
+        int index = 0;
+        index < WIFI_MAX_NETWORKS;
+        index++
+    )
+    {
+        if (
+            entries[index].used &&
+            activeSsid.equals(
+                entries[index].ssid
+            )
+        )
+        {
+            wifiActiveConfigIndex =
+                index;
+
+            return index;
+        }
+    }
+
+    return -1;
+}
+
+
+static void wifiPrintStatus()
+{
+    _puts(
+        "\r\n"
+    );
+
+    if (
+        WiFi.status() !=
+        WL_CONNECTED
+    )
+    {
+        _puts(
+            "WiFi: offline\r\n"
+        );
+
+        return;
+    }
+
+    WifiConfigEntry entries[
+        WIFI_MAX_NETWORKS
+    ];
+
+    bool haveConfig =
+        wifiLoadConfig(
+            entries
+        );
+
+    int index =
+        haveConfig
+            ? wifiFindActiveConfigIndex(
+                entries
+            )
+            : -1;
+
+    String ssid =
+        WiFi.SSID();
+
+    _puts(
+        "WiFi: connected\r\n"
+    );
+
+    _puts(
+        "SSID:  "
+    );
+
+    _puts(
+        ssid.c_str()
+    );
+
+    _puts(
+        "\r\n"
+    );
+
+    wifiPrintAddress(
+        "IP:",
+        WiFi.localIP()
+    );
+
+    wifiPrintAddress(
+        "Mask:",
+        WiFi.subnetMask()
+    );
+
+    wifiPrintAddress(
+        "GW:",
+        WiFi.gatewayIP()
+    );
+
+    wifiPrintAddress(
+        "DNS:",
+        WiFi.dnsIP()
+    );
+
+    _puts(
+        "Mode:  "
+    );
+
+    if (
+        index >= 0 &&
+        wifiEntryHasStaticAddress(
+            entries[index]
+        )
+    )
+    {
+        _puts(
+            "STATIC\r\n"
+        );
+    }
+    else
+    {
+        _puts(
+            "DHCP\r\n"
+        );
+    }
+}
+
+
+static bool wifiAddressKeyForIndex(
+    const char *key,
+    int index
+)
+{
+    return (
+        wifiConfigIndex(
+            key,
+            "IP"
+        ) == index ||
+        wifiConfigIndex(
+            key,
+            "MASK"
+        ) == index ||
+        wifiConfigIndex(
+            key,
+            "GW"
+        ) == index ||
+        wifiConfigIndex(
+            key,
+            "DNS"
+        ) == index
+    );
+}
+
+
+static bool wifiReplaceConfigWithTemp()
+{
+    if (SD.exists(
+        WIFI_CONFIG_BACKUP_FILE
+    ))
+    {
+        SD.remove(
+            WIFI_CONFIG_BACKUP_FILE
+        );
+    }
+
+    File original =
+        SD.open(
+            WIFI_CONFIG_FILE,
+            O_WRITE | O_APPEND
+        );
+
+    if (!original)
+    {
+        return false;
+    }
+
+    if (!original.rename(
+        WIFI_CONFIG_BACKUP_FILE
+    ))
+    {
+        original.close();
+
+        return false;
+    }
+
+    original.close();
+
+    File temp =
+        SD.open(
+            WIFI_CONFIG_TEMP_FILE,
+            O_WRITE | O_APPEND
+        );
+
+    if (
+        !temp ||
+        !temp.rename(
+            WIFI_CONFIG_FILE
+        )
+    )
+    {
+        if (temp)
+        {
+            temp.close();
+        }
+
+        File backup =
+            SD.open(
+                WIFI_CONFIG_BACKUP_FILE,
+                O_WRITE | O_APPEND
+            );
+
+        if (backup)
+        {
+            backup.rename(
+                WIFI_CONFIG_FILE
+            );
+
+            backup.close();
+        }
+
+        return false;
+    }
+
+    temp.close();
+
+    SD.remove(
+        WIFI_CONFIG_BACKUP_FILE
+    );
+
+    return true;
+}
+
+
+static bool wifiWriteAddressConfig(
+    int index,
+    const char *ip,
+    const char *mask,
+    const char *gateway,
+    const char *dns
+)
+{
+    if (
+        index < 0 ||
+        index >= WIFI_MAX_NETWORKS
+    )
+    {
+        return false;
+    }
+
+    File source =
+        SD.open(
+            WIFI_CONFIG_FILE,
+            O_READ
+        );
+
+    if (!source)
+    {
+        return false;
+    }
+
+    if (SD.exists(
+        WIFI_CONFIG_TEMP_FILE
+    ))
+    {
+        SD.remove(
+            WIFI_CONFIG_TEMP_FILE
+        );
+    }
+
+    File output =
+        SD.open(
+            WIFI_CONFIG_TEMP_FILE,
+            O_CREAT | O_WRITE | O_TRUNC
+        );
+
+    if (!output)
+    {
+        source.close();
+
+        return false;
+    }
+
+    char rawLine[WIFI_LINE_SIZE];
+
+    while (
+        wifiReadLine(
+            source,
+            rawLine,
+            sizeof(rawLine)
+        )
+    )
+    {
+        bool skip =
+            false;
+
+        char parseLine[
+            WIFI_LINE_SIZE
+        ];
+
+        strncpy(
+            parseLine,
+            rawLine,
+            sizeof(parseLine) - 1
+        );
+
+        parseLine[
+            sizeof(parseLine) - 1
+        ] = 0;
+
+        char *text =
+            wifiTrim(
+                parseLine
+            );
+
+        if (
+            *text &&
+            *text != '#' &&
+            *text != ';'
+        )
+        {
+            char *equals =
+                strchr(
+                    text,
+                    '='
+                );
+
+            if (equals)
+            {
+                *equals = 0;
+
+                char *key =
+                    wifiTrim(
+                        text
+                    );
+
+                skip =
+                    wifiAddressKeyForIndex(
+                        key,
+                        index
+                    );
+            }
+        }
+
+        if (!skip)
+        {
+            output.print(
+                rawLine
+            );
+
+            output.print(
+                "\r\n"
+            );
+        }
+    }
+
+    source.close();
+
+    if (
+        ip &&
+        mask &&
+        gateway
+    )
+    {
+        output.print(
+            "\r\nIP"
+        );
+        output.print(
+            index + 1
+        );
+        output.print(
+            "="
+        );
+        output.print(
+            ip
+        );
+
+        output.print(
+            "\r\nMASK"
+        );
+        output.print(
+            index + 1
+        );
+        output.print(
+            "="
+        );
+        output.print(
+            mask
+        );
+
+        output.print(
+            "\r\nGW"
+        );
+        output.print(
+            index + 1
+        );
+        output.print(
+            "="
+        );
+        output.print(
+            gateway
+        );
+
+        if (
+            dns &&
+            dns[0]
+        )
+        {
+            output.print(
+                "\r\nDNS"
+            );
+            output.print(
+                index + 1
+            );
+            output.print(
+                "="
+            );
+            output.print(
+                dns
+            );
+        }
+
+        output.print(
+            "\r\n"
+        );
+    }
+
+    output.flush();
+    output.close();
+
+    if (!wifiReplaceConfigWithTemp())
+    {
+        SD.remove(
+            WIFI_CONFIG_TEMP_FILE
+        );
+
+        return false;
+    }
+
+    return true;
+}
+
+
+static void wifiStopTelnetForReconnect()
+{
+    if (
+        cardConsoleMode ==
+        CARD_CONSOLE_TELNET
+    )
+    {
+        setCardConsoleMode(
+            CARD_CONSOLE_LOCAL
+        );
+    }
+
+    if (
+        telnetClient &&
+        telnetClient.connected()
+    )
+    {
+        telnetClient.stop();
+    }
+
+    if (telnetServerStarted)
+    {
+        telnetServer.stop();
+    }
+
+    telnetServerStarted =
+        false;
+}
+
+
+static bool wifiReconnectEntry(
+    const WifiConfigEntry &entry,
+    int index
+)
+{
+    wifiStopTelnetForReconnect();
+
+    WiFi.setAutoReconnect(
+        false
+    );
+
+    WiFi.disconnect(
+        false,
+        false
+    );
+
+    delay(100);
+
+    WiFi.mode(
+        WIFI_STA
+    );
+
+    if (!wifiApplyAddressConfig(
+        entry
+    ))
+    {
+        _puts(
+            "\r\nIFCONFIG: invalid saved IP configuration\r\n"
+        );
+
+        return false;
+    }
+
+    _puts(
+        "\r\nIFCONFIG: reconnecting to "
+    );
+
+    _puts(
+        entry.ssid
+    );
+
+    _puts(
+        "\r\n"
+    );
+
+    if (entry.password[0])
+    {
+        WiFi.begin(
+            entry.ssid,
+            entry.password
+        );
+    }
+    else
+    {
+        WiFi.begin(
+            entry.ssid
+        );
+    }
+
+    uint32_t started =
+        millis();
+
+    while (
+        WiFi.status() !=
+            WL_CONNECTED &&
+        (
+            uint32_t
+        )(
+            millis() -
+            started
+        ) <
+            WIFI_CONNECT_TIMEOUT_MS
+    )
+    {
+        terminalMaybeRefresh();
+
+        delay(50);
+    }
+
+    if (
+        WiFi.status() !=
+        WL_CONNECTED
+    )
+    {
+        _puts(
+            "IFCONFIG: reconnect failed; WiFi offline\r\n"
+        );
+
+        wifiActiveConfigIndex =
+            -1;
+
+        WiFi.disconnect(
+            false,
+            false
+        );
+
+        WiFi.mode(
+            WIFI_OFF
+        );
+
+        return false;
+    }
+
+    wifiActiveConfigIndex =
+        index;
+
+    WiFi.setAutoReconnect(
+        true
+    );
+
+    telnetServer.begin();
+
+    telnetServerStarted =
+        true;
+
+    _puts(
+        "IFCONFIG: WiFi connected; Telnet listening on port 23\r\n"
+    );
+
+    return true;
+}
+
+
+static bool wifiEqualsIgnoreCase(
+    const char *left,
+    const char *right
+)
+{
+    if (
+        !left ||
+        !right
+    )
+    {
+        return false;
+    }
+
+    while (
+        *left &&
+        *right
+    )
+    {
+        if (
+            toupper(
+                (unsigned char)*left
+            ) !=
+            toupper(
+                (unsigned char)*right
+            )
+        )
+        {
+            return false;
+        }
+
+        left++;
+        right++;
+    }
+
+    return (
+        *left == 0 &&
+        *right == 0
+    );
+}
+
+
+static int wifiTokenize(
+    char *text,
+    char **arguments,
+    int maxArguments
+)
+{
+    int count = 0;
+
+    while (*text)
+    {
+        while (
+            *text == ' ' ||
+            *text == '\t'
+        )
+        {
+            text++;
+        }
+
+        if (!*text)
+        {
+            break;
+        }
+
+        if (
+            count >=
+            maxArguments
+        )
+        {
+            return count + 1;
+        }
+
+        arguments[count++] =
+            text;
+
+        while (
+            *text &&
+            *text != ' ' &&
+            *text != '\t'
+        )
+        {
+            text++;
+        }
+
+        if (*text)
+        {
+            *text++ = 0;
+        }
+    }
+
+    return count;
+}
+
+
+static void wifiPrintIfconfigUsage()
+{
+    _puts(
+        "\r\n"
+        "Usage:\r\n"
+        "  IFCONFIG\r\n"
+        "  IFCONFIG DHCP\r\n"
+        "  IFCONFIG ip mask gateway [dns]\r\n"
+    );
+}
+
+
+uint16 cardputerIfconfigBdos(
+    uint16 commandTail
+)
+{
+    uint8_t length =
+        _RamRead(
+            commandTail
+        );
+
+    if (length > 127)
+    {
+        length = 127;
+    }
+
+    char buffer[129];
+
+    for (
+        uint8_t index = 0;
+        index < length;
+        index++
+    )
+    {
+        buffer[index] =
+            (char)_RamRead(
+                commandTail +
+                1 +
+                index
+            );
+    }
+
+    buffer[length] = 0;
+
+    char *text =
+        wifiTrim(
+            buffer
+        );
+
+    if (*text == 0)
+    {
+        wifiPrintStatus();
+
+        return 0;
+    }
+
+    char *arguments[5];
+
+    int argumentCount =
+        wifiTokenize(
+            text,
+            arguments,
+            5
+        );
+
+    bool requestDhcp =
+        argumentCount == 1 &&
+        wifiEqualsIgnoreCase(
+            arguments[0],
+            "DHCP"
+        );
+
+    bool requestStatic =
+        argumentCount == 3 ||
+        argumentCount == 4;
+
+    if (
+        !requestDhcp &&
+        !requestStatic
+    )
+    {
+        wifiPrintIfconfigUsage();
+
+        return 0x00FF;
+    }
+
+    if (
+        WiFi.status() !=
+        WL_CONNECTED
+    )
+    {
+        _puts(
+            "\r\nIFCONFIG: WiFi is offline; no active WIFI.CFG entry\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    WifiConfigEntry entries[
+        WIFI_MAX_NETWORKS
+    ];
+
+    if (!wifiLoadConfig(
+        entries
+    ))
+    {
+        _puts(
+            "\r\nIFCONFIG: cannot read /WIFI.CFG\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    int activeIndex =
+        wifiFindActiveConfigIndex(
+            entries
+        );
+
+    if (activeIndex < 0)
+    {
+        _puts(
+            "\r\nIFCONFIG: connected SSID is not present in /WIFI.CFG\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    if (requestDhcp)
+    {
+        if (!wifiWriteAddressConfig(
+            activeIndex,
+            NULL,
+            NULL,
+            NULL,
+            NULL
+        ))
+        {
+            _puts(
+                "\r\nIFCONFIG: failed to update /WIFI.CFG\r\n"
+            );
+
+            return 0x00FF;
+        }
+    }
+    else
+    {
+        IPAddress ip;
+        IPAddress mask;
+        IPAddress gateway;
+        IPAddress dns;
+
+        if (
+            !wifiParseAddress(
+                arguments[0],
+                ip
+            ) ||
+            !wifiParseAddress(
+                arguments[1],
+                mask
+            ) ||
+            !wifiParseAddress(
+                arguments[2],
+                gateway
+            ) ||
+            (
+                argumentCount == 4 &&
+                !wifiParseAddress(
+                    arguments[3],
+                    dns
+                )
+            )
+        )
+        {
+            _puts(
+                "\r\nIFCONFIG: invalid IPv4 address\r\n"
+            );
+
+            wifiPrintIfconfigUsage();
+
+            return 0x00FF;
+        }
+
+        if (!wifiWriteAddressConfig(
+            activeIndex,
+            arguments[0],
+            arguments[1],
+            arguments[2],
+            argumentCount == 4
+                ? arguments[3]
+                : NULL
+        ))
+        {
+            _puts(
+                "\r\nIFCONFIG: failed to update /WIFI.CFG\r\n"
+            );
+
+            return 0x00FF;
+        }
+    }
+
+    if (!wifiLoadConfig(
+        entries
+    ))
+    {
+        _puts(
+            "\r\nIFCONFIG: configuration saved but cannot be reloaded\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    if (!wifiReconnectEntry(
+        entries[activeIndex],
+        activeIndex
+    ))
+    {
+        _puts(
+            "IFCONFIG: setting saved; it will be retried on next boot\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    wifiPrintStatus();
+
+    return 0;
+}
+
+
 static bool wifiConnectFromConfig()
 {
     WifiConfigEntry entries[
         WIFI_MAX_NETWORKS
     ];
+
+    wifiActiveConfigIndex =
+        -1;
 
     _puts(
         "WiFi: reading /WIFI.CFG\r\n"
@@ -4171,6 +5363,17 @@ static bool wifiConnectFromConfig()
             delay(10);
         }
 
+        if (!wifiApplyAddressConfig(
+            entries[index]
+        ))
+        {
+            _puts(
+                "WiFi: invalid IP configuration; skipping network\r\n"
+            );
+
+            continue;
+        }
+
         if (
             entries[index].password[0]
         )
@@ -4238,6 +5441,9 @@ static bool wifiConnectFromConfig()
             WL_CONNECTED
         )
         {
+            wifiActiveConfigIndex =
+                index;
+
             _puts(
                 "WiFi: connected to "
             );
@@ -4315,6 +5521,9 @@ static bool wifiConnectFromConfig()
     WiFi.mode(
         WIFI_OFF
     );
+
+    wifiActiveConfigIndex =
+        -1;
 
     return false;
 }
