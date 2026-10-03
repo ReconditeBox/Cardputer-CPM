@@ -2190,7 +2190,7 @@ uint16 cardputerBrowserBdos(
         if (!cardputerNetworkReadLine(
             "browse> ",
             command,
-            sizeof(command)
+            BROWSER_URL_MAX + 16
         ))
         {
             break;
@@ -2284,11 +2284,11 @@ uint16 cardputerBrowserBdos(
                 links[
                     linkNumber - 1
                 ].url,
-                sizeof(current) - 1
+                BROWSER_URL_MAX - 1
             );
 
             current[
-                sizeof(current) - 1
+                BROWSER_URL_MAX - 1
             ] = 0;
 
             needLoad =
