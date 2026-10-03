@@ -205,6 +205,7 @@ void _clrscr(void);
 static void setCardConsoleMode(uint8_t mode);
 static void telnetResetInputState();
 static void telnetFormatRemoteIP(char *buffer, size_t bufferSize);
+static void cardputerCycleSystemMode();
 
 
 /*
@@ -2521,6 +2522,21 @@ static void pollCardputerKeyboard()
     static uint64_t previousKeyMask = 0;
 
     M5Cardputer.update();
+
+    /*
+     * G0 is the physical machine-mode button.
+     *
+     * At runtime it cycles:
+     *   LOCAL -> TELNETD -> FTPD -> LOCAL
+     *
+     * This is deliberately handled before the keyboard matrix so G0
+     * never becomes a CP/M keypress.
+     */
+    if (M5Cardputer.BtnA.wasPressed())
+    {
+        cardputerCycleSystemMode();
+        return;
+    }
 
 
     /*
@@ -5514,8 +5530,8 @@ static void telnetPrintUsage()
 }
 
 
-uint16 cardputerTelnetdBdos(
-    uint16 commandTail
+static uint16 cardputerStartTelnetd(
+    uint16_t requestedPort
 )
 {
     if (ftpIsActive())
@@ -5552,75 +5568,6 @@ uint16 cardputerTelnetdBdos(
         _puts(
             "\r\nTELNETD: already active\r\n"
         );
-
-        return 0x00FF;
-    }
-
-    uint8_t length =
-        _RamRead(
-            commandTail
-        );
-
-    if (length > 127)
-    {
-        length = 127;
-    }
-
-    char buffer[129];
-
-    for (
-        uint8_t index = 0;
-        index < length;
-        index++
-    )
-    {
-        buffer[index] =
-            (char)_RamRead(
-                commandTail +
-                1 +
-                index
-            );
-    }
-
-    buffer[length] = 0;
-
-    char *text =
-        wifiTrim(
-            buffer
-        );
-
-    char *arguments[2];
-
-    int argumentCount =
-        wifiTokenize(
-            text,
-            arguments,
-            2
-        );
-
-    if (argumentCount > 1)
-    {
-        telnetPrintUsage();
-
-        return 0x00FF;
-    }
-
-    uint16_t requestedPort =
-        TELNET_DEFAULT_PORT;
-
-    if (
-        argumentCount == 1 &&
-        !telnetParsePort(
-            arguments[0],
-            requestedPort
-        )
-    )
-    {
-        _puts(
-            "\r\nTELNETD: invalid port\r\n"
-        );
-
-        telnetPrintUsage();
 
         return 0x00FF;
     }
@@ -5695,6 +5642,84 @@ uint16 cardputerTelnetdBdos(
 }
 
 
+uint16 cardputerTelnetdBdos(
+    uint16 commandTail
+)
+{
+    uint8_t length =
+        _RamRead(
+            commandTail
+        );
+
+    if (length > 127)
+    {
+        length = 127;
+    }
+
+    char buffer[129];
+
+    for (
+        uint8_t index = 0;
+        index < length;
+        index++
+    )
+    {
+        buffer[index] =
+            (char)_RamRead(
+                commandTail +
+                1 +
+                index
+            );
+    }
+
+    buffer[length] = 0;
+
+    char *text =
+        wifiTrim(
+            buffer
+        );
+
+    char *arguments[2];
+
+    int argumentCount =
+        wifiTokenize(
+            text,
+            arguments,
+            2
+        );
+
+    if (argumentCount > 1)
+    {
+        telnetPrintUsage();
+
+        return 0x00FF;
+    }
+
+    uint16_t requestedPort =
+        TELNET_DEFAULT_PORT;
+
+    if (
+        argumentCount == 1 &&
+        !telnetParsePort(
+            arguments[0],
+            requestedPort
+        )
+    )
+    {
+        _puts(
+            "\r\nTELNETD: invalid port\r\n"
+        );
+
+        telnetPrintUsage();
+
+        return 0x00FF;
+    }
+
+    return cardputerStartTelnetd(
+        requestedPort
+    );
+}
+
 static void wifiPrintIfconfigUsage()
 {
     _puts(
@@ -5768,6 +5793,96 @@ uint16 cardputerFtpdBdos()
     );
 
     return 0;
+}
+
+
+/*
+ * ====================================================
+ * G0 physical system-mode switch
+ *
+ * Runtime sequence:
+ *
+ *   LOCAL -> TELNETD -> FTPD -> LOCAL
+ *
+ * G0 retains its ESP32 download-mode purpose when held during
+ * power-on; this handler only applies after Cardputer-CPM is running.
+ * ====================================================
+ */
+
+static void cardputerCycleSystemMode()
+{
+    /*
+     * FTPD does not call pollCardputerKeyboard() while its foreground
+     * service loop owns the machine. G0 stopping FTPD is therefore
+     * handled inside cardputerFtpdBdos()/ftpTransferCanContinue().
+     */
+    if (ftpIsActive())
+    {
+        return;
+    }
+
+    bool telnetdActive =
+        cardConsoleMode ==
+            CARD_CONSOLE_TELNET ||
+        telnetServerStarted ||
+        (
+            telnetClient &&
+            telnetClient.connected()
+        );
+
+    if (telnetdActive)
+    {
+        /*
+         * TELNETD -> FTPD.
+         *
+         * Close the Telnet listener/client cleanly first because the two
+         * foreground server modes intentionally remain mutually exclusive.
+         */
+        setCardConsoleMode(
+            CARD_CONSOLE_LOCAL
+        );
+
+        _puts(
+            "\r\n[G0: FTPD]\r\n"
+        );
+
+        cardputerFtpdBdos();
+
+        return;
+    }
+
+    /*
+     * Any ordinary console mode (LOCAL/USB/BOTH) enters TELNETD.
+     * TELNETD itself switches CON: to the Telnet route.
+     */
+    if (
+        cardConsoleMode !=
+        CARD_CONSOLE_LOCAL
+    )
+    {
+        setCardConsoleMode(
+            CARD_CONSOLE_LOCAL
+        );
+    }
+
+    _puts(
+        "\r\n[G0: TELNETD]\r\n"
+    );
+
+    if (
+        cardputerStartTelnetd(
+            TELNET_DEFAULT_PORT
+        ) != 0
+    )
+    {
+        _puts(
+            "[G0: remaining in LOCAL]\r\n"
+        );
+
+        setCardConsoleMode(
+            CARD_CONSOLE_LOCAL
+        );
+    }
 }
 
 
