@@ -25,6 +25,7 @@ SdFat SD;
 #define board_cardputer_ifconfig
 #define board_cardputer_telnetd
 #define board_cardputer_mem
+#define board_cardputer_ftpd
 #define board_cardputer_removable_media
 
 /*
@@ -113,6 +114,7 @@ uint16 cardputerSetdefBdos(uint16 commandTail);
 uint16 cardputerIfconfigBdos(uint16 commandTail);
 uint16 cardputerTelnetdBdos(uint16 commandTail);
 uint16 cardputerMemBdos();
+uint16 cardputerFtpdBdos();
 
 
 uint8 esp32bdos(uint16 value)
