@@ -1416,6 +1416,8 @@ static void setCardConsoleMode(
         telnetClient.flush();
         delay(10);
         telnetClient.stop();
+        telnetClient =
+            WiFiClient();
         telnetResetInputState();
     }
 
@@ -2943,6 +2945,9 @@ static void telnetServiceConnection()
             CARD_CONSOLE_TELNET;
 
         telnetClient.stop();
+
+        telnetClient =
+            WiFiClient();
 
         telnetResetInputState();
 
