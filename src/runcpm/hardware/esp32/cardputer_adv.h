@@ -23,6 +23,7 @@ SdFat SD;
 #define board_digital_io
 #define board_cardputer_setdef
 #define board_cardputer_ifconfig
+#define board_cardputer_telnetd
 #define board_cardputer_removable_media
 
 /*
@@ -109,6 +110,7 @@ static bool cardputerMediaRootPath(
 uint8 cardputerEsp32Bdos(uint16 value);
 uint16 cardputerSetdefBdos(uint16 commandTail);
 uint16 cardputerIfconfigBdos(uint16 commandTail);
+uint16 cardputerTelnetdBdos(uint16 commandTail);
 
 
 uint8 esp32bdos(uint16 value)
