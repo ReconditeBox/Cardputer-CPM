@@ -34,6 +34,8 @@ SdFat SD;
 #define board_cardputer_wget
 #define board_cardputer_ntp
 #define board_cardputer_time
+#define board_cardputer_ftpclient
+#define board_cardputer_browser
 #define board_cardputer_removable_media
 
 /*
@@ -130,6 +132,8 @@ uint16 cardputerTelnetBdos(uint16 commandTail);
 uint16 cardputerWgetBdos(uint16 commandTail);
 uint16 cardputerNtpBdos(uint16 commandTail);
 uint16 cardputerTimeBdos();
+uint16 cardputerFtpClientBdos(uint16 commandTail);
+uint16 cardputerBrowserBdos(uint16 commandTail);
 
 uint8 cardputerAuxRead();
 void cardputerAuxWrite(uint8 value);
