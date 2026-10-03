@@ -68,6 +68,9 @@ static char ftpRenameFrom[
 static bool ftpRenamePending =
     false;
 
+static char ftpLastEvent[96] =
+    "Waiting for client...";
+
 static uint8_t ftpDataBuffer[
     FTP_DATA_BUFFER_SIZE
 ];
@@ -135,6 +138,94 @@ static void ftpFormatRemoteIP(
 }
 
 
+static void ftpShowStatus()
+{
+    M5Cardputer.Display.fillScreen(
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextColor(
+        GREEN,
+        BLACK
+    );
+
+    M5Cardputer.Display.setTextSize(1);
+
+    M5Cardputer.Display.setCursor(
+        0,
+        0
+    );
+
+    M5Cardputer.Display.println(
+        "CP/M FTP SERVER"
+    );
+
+    M5Cardputer.Display.println(
+        "--------------"
+    );
+
+    M5Cardputer.Display.println();
+
+    IPAddress ip =
+        WiFi.localIP();
+
+    M5Cardputer.Display.printf(
+        "%u.%u.%u.%u:%u\n",
+        ip[0],
+        ip[1],
+        ip[2],
+        ip[3],
+        FTP_CONTROL_PORT
+    );
+
+    M5Cardputer.Display.printf(
+        "Drive: F:  User: %u\n",
+        ftpCurrentUser
+    );
+
+    M5Cardputer.Display.println();
+
+    if (
+        ftpControlClient &&
+        ftpControlClient.connected()
+    )
+    {
+        M5Cardputer.Display.println(
+            "FTP client connected"
+        );
+
+        if (ftpRemoteIPValid)
+        {
+            M5Cardputer.Display.printf(
+                "Client: %u.%u.%u.%u\n",
+                ftpRemoteIP[0],
+                ftpRemoteIP[1],
+                ftpRemoteIP[2],
+                ftpRemoteIP[3]
+            );
+        }
+    }
+    else
+    {
+        M5Cardputer.Display.println(
+            "Waiting for client..."
+        );
+    }
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.println(
+        ftpLastEvent
+    );
+
+    M5Cardputer.Display.println();
+
+    M5Cardputer.Display.println(
+        "Fn+= = LOCAL"
+    );
+}
+
+
 static void ftpConsoleConnectionEvent(
     bool connected
 )
@@ -157,9 +248,34 @@ static void ftpConsoleConnectionEvent(
         peer
     );
 
-    _puts(
-        message
+    strncpy(
+        ftpLastEvent,
+        message + 2,
+        sizeof(ftpLastEvent) - 1
     );
+
+    ftpLastEvent[
+        sizeof(ftpLastEvent) - 1
+    ] = 0;
+
+    size_t length =
+        strlen(
+            ftpLastEvent
+        );
+
+    while (
+        length &&
+        (
+            ftpLastEvent[length - 1] == '\r' ||
+            ftpLastEvent[length - 1] == '\n'
+        )
+    )
+    {
+        ftpLastEvent[--length] =
+            0;
+    }
+
+    ftpShowStatus();
 }
 
 
@@ -1732,6 +1848,8 @@ static void ftpHandleCwd(
     ftpRenamePending =
         false;
 
+    ftpShowStatus();
+
     ftpReply(
         250,
         "CP/M user area changed."
@@ -2465,6 +2583,16 @@ static bool ftpStart()
 
     ftpResetSessionState();
 
+    strncpy(
+        ftpLastEvent,
+        "Waiting for client...",
+        sizeof(ftpLastEvent) - 1
+    );
+
+    ftpLastEvent[
+        sizeof(ftpLastEvent) - 1
+    ] = 0;
+
     IPAddress ip =
         WiFi.localIP();
 
@@ -2485,6 +2613,8 @@ static bool ftpStart()
     _puts(
         message
     );
+
+    ftpShowStatus();
 
     return true;
 }
