@@ -359,9 +359,16 @@ To use it:
 
 Only one Telnet client is accepted at a time.
 
-When a Telnet client connects or disconnects, the event is announced on the CP/M console.
+When a Telnet client connects or disconnects, the event is announced on the CP/M console together with the remote client's IPv4 address, for example:
 
-If the Telnet client disconnects while it owns `CON:`, the firmware automatically returns to LOCAL mode and announces the disconnect locally.
+```text
+[TELNET client connected from 192.168.1.23]
+[TELNET client disconnected from 192.168.1.23]
+```
+
+The Cardputer Telnet status screen also shows the connected client's IPv4 address.
+
+If the Telnet client disconnects while it owns `CON:`, the firmware automatically returns to LOCAL mode and announces the disconnect locally with the client's address.
 
 Returning `CON:` from TELNET to LOCAL also actively closes the Telnet client connection. This applies whether LOCAL is selected with `LOCAL.COM` or with the physical **Fn + =** emergency key.
 
