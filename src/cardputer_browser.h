@@ -15,7 +15,7 @@
 #define BROWSER_LINK_MAX      64
 #define BROWSER_TAG_MAX       512
 #define BROWSER_WORD_MAX      96
-#define BROWSER_LINE_WIDTH    78
+#define BROWSER_LINE_WIDTH    38
 #define BROWSER_HISTORY_MAX   8
 #define BROWSER_FETCH_TIMEOUT 15000
 #define BROWSER_TEMP_FILE     "/BROWSE.TMP"
@@ -97,21 +97,21 @@ static void browserPagerAfterLine(
 
     if (
         parser.pageLines <
-        18
+        12
     )
     {
         return;
     }
 
     _puts(
-        "-- More --  SPACE/ENTER=next  Q=stop display"
+        "--More-- ENTER=next Q=stop"
     );
 
     uint8_t ch =
         _getcon();
 
     _puts(
-        "\r                                             \r"
+        "\r                              \r"
     );
 
     parser.pageLines =
@@ -1647,7 +1647,7 @@ static bool browserFetchPage(
 
     _puts(
         "\r\n"
-        "----------------------------------------------------------------------------\r\n"
+        "--------------------------------------\r\n"
     );
 
     int response =
@@ -1908,8 +1908,10 @@ static bool browserFetchPage(
     snprintf(
         summary,
         sizeof(summary),
-        "----------------------------------------------------------------------------\r\n"
-        "%u link%s.  number=follow  B=back  G=go  R=reload  L=links  Q=quit\r\n",
+        "--------------------------------------\r\n"
+        "%u link%s\r\n"
+        "number=follow  B=back  G=go\r\n"
+        "R=reload  L=links  H=help  Q=quit\r\n",
         linkCount,
         linkCount == 1
             ? ""
