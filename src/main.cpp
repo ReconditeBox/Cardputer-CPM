@@ -5175,6 +5175,243 @@ static int wifiTokenize(
 }
 
 
+static bool telnetParsePort(
+    const char *text,
+    uint16_t &port
+)
+{
+    if (
+        !text ||
+        !text[0]
+    )
+    {
+        port =
+            TELNET_DEFAULT_PORT;
+
+        return true;
+    }
+
+    uint32_t value = 0;
+
+    while (*text)
+    {
+        if (
+            *text < '0' ||
+            *text > '9'
+        )
+        {
+            return false;
+        }
+
+        value =
+            value * 10 +
+            (uint32_t)(
+                *text - '0'
+            );
+
+        if (value > 65535)
+        {
+            return false;
+        }
+
+        text++;
+    }
+
+    if (value == 0)
+    {
+        return false;
+    }
+
+    port =
+        (uint16_t)value;
+
+    return true;
+}
+
+
+static void telnetPrintUsage()
+{
+    _puts(
+        "\r\n"
+        "Usage:\r\n"
+        "  TELNETD\r\n"
+        "  TELNETD port\r\n"
+    );
+}
+
+
+uint16 cardputerTelnetdBdos(
+    uint16 commandTail
+)
+{
+    if (
+        WiFi.status() !=
+        WL_CONNECTED
+    )
+    {
+        _puts(
+            "\r\nTELNETD: WiFi is offline\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    if (
+        cardConsoleMode ==
+            CARD_CONSOLE_TELNET ||
+        telnetServerStarted ||
+        (
+            telnetClient &&
+            telnetClient.connected()
+        )
+    )
+    {
+        _puts(
+            "\r\nTELNETD: already active\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    uint8_t length =
+        _RamRead(
+            commandTail
+        );
+
+    if (length > 127)
+    {
+        length = 127;
+    }
+
+    char buffer[129];
+
+    for (
+        uint8_t index = 0;
+        index < length;
+        index++
+    )
+    {
+        buffer[index] =
+            (char)_RamRead(
+                commandTail +
+                1 +
+                index
+            );
+    }
+
+    buffer[length] = 0;
+
+    char *text =
+        wifiTrim(
+            buffer
+        );
+
+    char *arguments[2];
+
+    int argumentCount =
+        wifiTokenize(
+            text,
+            arguments,
+            2
+        );
+
+    if (argumentCount > 1)
+    {
+        telnetPrintUsage();
+
+        return 0x00FF;
+    }
+
+    uint16_t requestedPort =
+        TELNET_DEFAULT_PORT;
+
+    if (
+        argumentCount == 1 &&
+        !telnetParsePort(
+            arguments[0],
+            requestedPort
+        )
+    )
+    {
+        _puts(
+            "\r\nTELNETD: invalid port\r\n"
+        );
+
+        telnetPrintUsage();
+
+        return 0x00FF;
+    }
+
+    if (telnetServer)
+    {
+        telnetServer->stop();
+        delete telnetServer;
+        telnetServer =
+            NULL;
+    }
+
+    telnetPort =
+        requestedPort;
+
+    telnetRemoteIPValid =
+        false;
+
+    telnetServer =
+        new WiFiServer(
+            telnetPort
+        );
+
+    if (!telnetServer)
+    {
+        _puts(
+            "\r\nTELNETD: unable to create server\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    telnetServer->begin();
+
+    telnetServerStarted =
+        true;
+
+    char message[64];
+
+    snprintf(
+        message,
+        sizeof(message),
+        "\r\nTELNETD: listening on port %u\r\n",
+        telnetPort
+    );
+
+    _puts(
+        message
+    );
+
+    setCardConsoleMode(
+        CARD_CONSOLE_TELNET
+    );
+
+    if (
+        cardConsoleMode !=
+        CARD_CONSOLE_TELNET
+    )
+    {
+        telnetServer->stop();
+        delete telnetServer;
+        telnetServer =
+            NULL;
+
+        telnetServerStarted =
+            false;
+
+        return 0x00FF;
+    }
+
+    return 0;
+}
+
+
 static void wifiPrintIfconfigUsage()
 {
     _puts(
