@@ -2568,11 +2568,6 @@ static void pollCardputerKeyboard()
         status.f12
     )
     {
-        if (ftpIsActive())
-        {
-            ftpStop();
-        }
-
         setCardConsoleMode(
             CARD_CONSOLE_LOCAL
         );
@@ -3399,8 +3394,6 @@ static void pollInputs()
     pollCardputerKeyboard();
 
     pollUSBKeyboard();
-
-    ftpService();
 
     pollTelnetKeyboard();
 
@@ -5582,9 +5575,48 @@ uint16 cardputerFtpdBdos()
         return 0x00FF;
     }
 
-    return ftpStart()
-        ? 0
-        : 0x00FF;
+    if (!ftpStart())
+    {
+        return 0x00FF;
+    }
+
+    /*
+     * FTPD is a foreground service, like TELNETD is a dedicated
+     * operating mode. Do not return to the CP/M prompt while the
+     * daemon is active. The only local escape is physical Fn+=.
+     *
+     * Unlike TELNETD, an FTP client disconnect does not terminate
+     * the daemon; ftpService() returns to listening for the next client.
+     */
+    while (ftpIsActive())
+    {
+        ftpService();
+
+        M5Cardputer.update();
+
+        Keyboard_Class::KeysState status =
+            M5Cardputer.Keyboard.keysState();
+
+        if (
+            status.fn &&
+            status.f12
+        )
+        {
+            ftpStop();
+
+            cardputerWaitForAllKeysReleased();
+
+            break;
+        }
+
+        delay(2);
+    }
+
+    terminalRenderAll(
+        true
+    );
+
+    return 0;
 }
 
 
