@@ -104,6 +104,8 @@ static uint8_t telnetInputState =
 
 static uint8_t telnetIacCommand = 0;
 
+#include "cardputer_ftpd.h"
+
 
 /*
  * ====================================================
@@ -2566,6 +2568,11 @@ static void pollCardputerKeyboard()
         status.f12
     )
     {
+        if (ftpIsActive())
+        {
+            ftpStop();
+        }
+
         setCardConsoleMode(
             CARD_CONSOLE_LOCAL
         );
@@ -3392,6 +3399,8 @@ static void pollInputs()
     pollCardputerKeyboard();
 
     pollUSBKeyboard();
+
+    ftpService();
 
     pollTelnetKeyboard();
 
@@ -5365,6 +5374,15 @@ uint16 cardputerTelnetdBdos(
     uint16 commandTail
 )
 {
+    if (ftpIsActive())
+    {
+        _puts(
+            "\r\nTELNETD: unavailable while FTPD is active\r\n"
+        );
+
+        return 0x00FF;
+    }
+
     if (
         WiFi.status() !=
         WL_CONNECTED
@@ -5545,6 +5563,31 @@ static void wifiPrintIfconfigUsage()
 }
 
 
+uint16 cardputerFtpdBdos()
+{
+    if (
+        cardConsoleMode ==
+            CARD_CONSOLE_TELNET ||
+        telnetServerStarted ||
+        (
+            telnetClient &&
+            telnetClient.connected()
+        )
+    )
+    {
+        _puts(
+            "\r\nFTPD: unavailable while TELNETD is active\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    return ftpStart()
+        ? 0
+        : 0x00FF;
+}
+
+
 uint16 cardputerIfconfigBdos(
     uint16 commandTail
 )
@@ -5646,6 +5689,17 @@ uint16 cardputerIfconfigBdos(
         _puts(
             "\r\n"
             "IFCONFIG: cannot change settings while a TELNET client is connected"
+            "\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    if (ftpIsActive())
+    {
+        _puts(
+            "\r\n"
+            "IFCONFIG: cannot change settings while FTPD is active"
             "\r\n"
         );
 
