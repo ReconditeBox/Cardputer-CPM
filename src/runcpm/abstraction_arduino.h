@@ -231,7 +231,16 @@ bool _sys_exists(uint8 *filename) {
 }
 
 File _sys_fopen_w(uint8 *filename) {
-    return (SD.open((char *)filename, O_CREAT | O_WRITE));
+    /*
+     * Host equivalent of fopen(..., "w"): create a new output file or
+     * truncate an existing one before the first byte is written.
+     *
+     * RunCPM uses this for the virtual PUN: and LST: devices.
+     */
+    return (SD.open(
+        (char *)filename,
+        O_CREAT | O_WRITE | O_TRUNC
+    ));
 }
 
 int _sys_fputc(uint8 ch, File &f) {
