@@ -2113,6 +2113,16 @@ void _Bdos(void) {
     }
 #endif
 
+#if defined board_cardputer_ftpd
+    /*
+       C = 237 (EDh) : Cardputer FTPD command
+     */
+    case 237: {
+        HL = cardputerFtpdBdos();
+        break;
+    }
+#endif
+
     /*
        C = 248 (F8h) : Milliseconds Uptime
        Returns the number of milliseconds (since the board started).
