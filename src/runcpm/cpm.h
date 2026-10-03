@@ -2325,6 +2325,38 @@ void _Bdos(void) {
     }
 #endif
 
+#if defined board_cardputer_wget
+    /*
+       C = 242 (F2h) : Cardputer WGET command
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 242: {
+        HL = cardputerWgetBdos(DE);
+        break;
+    }
+#endif
+
+#if defined board_cardputer_ntp
+    /*
+       C = 243 (F3h) : Cardputer NTP command
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 243: {
+        HL = cardputerNtpBdos(DE);
+        break;
+    }
+#endif
+
+#if defined board_cardputer_time
+    /*
+       C = 244 (F4h) : Cardputer TIME command
+     */
+    case 244: {
+        HL = cardputerTimeBdos();
+        break;
+    }
+#endif
+
     /*
        C = 248 (F8h) : Milliseconds Uptime
        Returns the number of milliseconds (since the board started).
