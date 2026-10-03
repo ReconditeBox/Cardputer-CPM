@@ -3534,9 +3534,18 @@ void _clrscr(void)
 
 /*
  * ====================================================
- * RunCPM PUN: / LST:
+ * RunCPM RDR: / PUN: / LST:
  * ====================================================
  */
+
+#ifdef USE_RDR
+
+File rdr_dev;
+int rdr_open = FALSE;
+int rdr_eof = FALSE;
+
+#endif
+
 
 #ifdef USE_PUN
 
