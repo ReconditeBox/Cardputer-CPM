@@ -6247,11 +6247,56 @@ uint16 cardputerDnsBdos(
             2
         );
 
+    if (argumentCount == 0)
+    {
+        IPAddress dns =
+            WiFi.dnsIP(
+                0
+            );
+
+        char dnsText[32];
+
+        networkFormatAddress(
+            dns,
+            dnsText,
+            sizeof(dnsText)
+        );
+
+        if (
+            dns[0] == 0 &&
+            dns[1] == 0 &&
+            dns[2] == 0 &&
+            dns[3] == 0
+        )
+        {
+            _puts(
+                "\r\nDNS: no active server configured\r\n"
+            );
+
+            return 0x00FF;
+        }
+
+        char message[80];
+
+        snprintf(
+            message,
+            sizeof(message),
+            "\r\nDNS server: %s\r\n",
+            dnsText
+        );
+
+        _puts(
+            message
+        );
+
+        return 0;
+    }
+
     if (argumentCount != 1)
     {
         _puts(
             "\r\n"
-            "Usage: DNS host\r\n"
+            "Usage: DNS [host]\r\n"
         );
 
         return 0x00FF;
