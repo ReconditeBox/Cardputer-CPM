@@ -24,6 +24,7 @@
 #define FTP_FILE_NAME_MAX 13
 #define FTP_DATA_BUFFER_SIZE 1024
 #define FTP_DATA_CONNECT_TIMEOUT_MS 8000
+#define FTP_DATA_DRAIN_TIMEOUT_MS 250
 
 static WiFiServer *ftpControlServer =
     NULL;
@@ -1461,12 +1462,20 @@ static void ftpHandleStore(
     bool okay =
         true;
 
+    bool draining =
+        false;
+
+    uint32_t drainStarted =
+        0;
+
     /*
      * Do not use connected() as the loop condition here.  The sender may
-     * close its TCP side immediately after transmitting the final block,
-     * and WiFiClient can then report disconnected while bytes from that
-     * block are still waiting in the receive buffer.  Drain everything
-     * already received before treating the data connection as complete.
+     * close its TCP side immediately after transmitting the final block.
+     * On the ESP32 TCP stack the disconnect can become visible just before
+     * the last received bytes become visible through available().
+     *
+     * Once the peer disconnects, keep polling for a short grace period and
+     * drain anything that arrives during that window before declaring EOF.
      */
     while (
         ftpActive &&
@@ -1480,8 +1489,39 @@ static void ftpHandleStore(
         {
             if (!ftpDataClient.connected())
             {
-                break;
+                if (!draining)
+                {
+                    draining =
+                        true;
+
+                    drainStarted =
+                        millis();
+                }
+                else if (
+                    (uint32_t)(
+                        millis() -
+                        drainStarted
+                    ) >=
+                        FTP_DATA_DRAIN_TIMEOUT_MS
+                )
+                {
+                    break;
+                }
+
+                if (!ftpTransferCanContinue())
+                {
+                    okay =
+                        false;
+
+                    break;
+                }
+
+                delay(2);
+                continue;
             }
+
+            draining =
+                false;
 
             if (!ftpTransferCanContinue())
             {
@@ -1494,6 +1534,12 @@ static void ftpHandleStore(
             delay(2);
             continue;
         }
+
+        /*
+         * Any newly visible data restarts the disconnect drain window.
+         */
+        draining =
+            false;
 
         int wanted =
             available;
