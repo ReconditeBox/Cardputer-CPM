@@ -2092,6 +2092,17 @@ void _Bdos(void) {
     }
 #endif
 
+#if defined board_cardputer_telnetd
+    /*
+       C = 235 (EBh) : Cardputer TELNETD command
+       DE = address of CP/M command tail (normally 0080h)
+     */
+    case 235: {
+        HL = cardputerTelnetdBdos(DE);
+        break;
+    }
+#endif
+
     /*
        C = 248 (F8h) : Milliseconds Uptime
        Returns the number of milliseconds (since the board started).
