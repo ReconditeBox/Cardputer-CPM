@@ -5,6 +5,7 @@
 #include <WiFiClientSecure.h>
 #include <time.h>
 #include <string.h>
+#include <strings.h>
 #include "ping/ping_sock.h"
 #include "lwip/ip_addr.h"
 
