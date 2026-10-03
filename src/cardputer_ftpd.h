@@ -38,6 +38,13 @@ static WiFiClient ftpDataClient;
 static bool ftpActive =
     false;
 
+/*
+ * Set when the physical G0 button stops FTPD. The foreground FTPD
+ * wrapper consumes this after the service loop exits and restores LOCAL.
+ */
+static bool ftpG0StopRequested =
+    false;
+
 static bool ftpLoggedIn =
     false;
 
@@ -221,6 +228,10 @@ static void ftpShowStatus()
 
     M5Cardputer.Display.println(
         "Fn+=  LOCAL"
+    );
+
+    M5Cardputer.Display.println(
+        "G0    LOCAL"
     );
 }
 
@@ -444,6 +455,14 @@ static void ftpCloseControlSession(
 static bool ftpPhysicalStopRequested()
 {
     M5Cardputer.update();
+
+    if (M5Cardputer.BtnA.wasPressed())
+    {
+        ftpG0StopRequested =
+            true;
+
+        return true;
+    }
 
     Keyboard_Class::KeysState status =
         M5Cardputer.Keyboard.keysState();
@@ -2790,6 +2809,9 @@ static bool ftpStart()
 
     ftpActive =
         true;
+
+    ftpG0StopRequested =
+        false;
 
     ftpResetSessionState();
 
