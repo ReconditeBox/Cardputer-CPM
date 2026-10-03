@@ -3534,6 +3534,140 @@ void _clrscr(void)
 
 /*
  * ====================================================
+ * Cardputer AUX UART
+ *
+ * EXT 14-pin header:
+ *   TX = GPIO 13
+ *   RX = GPIO 15
+ *
+ * 115200 8N1.
+ * ====================================================
+ */
+
+#define CARDPUTER_AUX_TX_PIN 13
+#define CARDPUTER_AUX_RX_PIN 15
+#define CARDPUTER_AUX_BAUD   115200
+
+HardwareSerial cardputerAuxSerial(1);
+
+
+static void cardputerAuxBegin()
+{
+    cardputerAuxSerial.setRxBufferSize(
+        512
+    );
+
+    cardputerAuxSerial.begin(
+        CARDPUTER_AUX_BAUD,
+        SERIAL_8N1,
+        CARDPUTER_AUX_RX_PIN,
+        CARDPUTER_AUX_TX_PIN
+    );
+}
+
+
+uint8 cardputerAuxRead()
+{
+    while (
+        cardputerAuxSerial.available() <=
+        0
+    )
+    {
+        M5Cardputer.update();
+        delay(1);
+    }
+
+    int value =
+        cardputerAuxSerial.read();
+
+    return (
+        value < 0
+            ? 0x1A
+            : (uint8)value
+    );
+}
+
+
+void cardputerAuxWrite(
+    uint8 value
+)
+{
+    cardputerAuxSerial.write(
+        value
+    );
+}
+
+
+uint8 cardputerAuxInputReady()
+{
+    return (
+        cardputerAuxSerial.available() > 0
+            ? 0xFF
+            : 0x00
+    );
+}
+
+
+uint8 cardputerAuxOutputReady()
+{
+    return 0xFF;
+}
+
+
+/*
+ * ====================================================
+ * Cardputer battery command
+ * ====================================================
+ */
+
+uint16 cardputerBatteryBdos()
+{
+    M5Cardputer.update();
+
+    int level =
+        M5Cardputer.Power.getBatteryLevel();
+
+    int millivolts =
+        M5Cardputer.Power.getBatteryVoltage();
+
+    _puts(
+        "\r\n"
+        "Battery\r\n"
+        "-------\r\n"
+    );
+
+    if (millivolts <= 0)
+    {
+        _puts(
+            "Battery status unavailable\r\n"
+        );
+
+        return 0x00FF;
+    }
+
+    char line[64];
+
+    snprintf(
+        line,
+        sizeof(line),
+        "Level:   %d%%\r\n"
+        "Voltage: %d mV (%d.%03d V)\r\n",
+        level,
+        millivolts,
+        millivolts / 1000,
+        millivolts % 1000
+    );
+
+    _puts(
+        line
+    );
+
+    return 0;
+}
+
+
+/*
+ * ====================================================
  * RunCPM RDR: / PUN: / LST:
  * ====================================================
  */
@@ -6203,6 +6337,12 @@ void setup()
 
 
     /*
+     * Hardware auxiliary serial port on the EXT header.
+     */
+    cardputerAuxBegin();
+
+
+    /*
      * LOCAL is always the boot default.
      */
     cardConsoleMode =
@@ -6268,6 +6408,7 @@ void setup()
 
     _puts(
         "Console: LOCAL\r\n"
+        "AUX:     115200 8N1\r\n"
         "SD:      ready\r\n"
     );
 
