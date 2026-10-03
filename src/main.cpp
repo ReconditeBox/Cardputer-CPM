@@ -137,6 +137,8 @@ static uint8_t telnetIacCommand = 0;
 M5Canvas terminal(&M5Cardputer.Display);
 
 static char termBuffer[TERM_ROWS][TERM_COLS];
+static bool termReverse[TERM_ROWS][TERM_COLS];
+static bool terminalReverseVideo = false;
 
 static int cursorX = 0;
 static int cursorY = 0;
@@ -364,6 +366,7 @@ static void terminalClearBuffer()
         for (int col = 0; col < TERM_COLS; col++)
         {
             termBuffer[row][col] = ' ';
+            termReverse[row][col] = false;
         }
     }
 }
@@ -393,11 +396,33 @@ static void terminalRenderAll(bool force = false)
             int logicalCol =
                 viewportX + screenCol;
 
+            if (
+                termReverse[logicalRow][logicalCol]
+            )
+            {
+                terminal.setTextColor(
+                    BLACK,
+                    GREEN
+                );
+            }
+            else
+            {
+                terminal.setTextColor(
+                    GREEN,
+                    BLACK
+                );
+            }
+
             terminal.write(
                 (uint8_t)termBuffer[logicalRow][logicalCol]
             );
         }
     }
+
+    terminal.setTextColor(
+        GREEN,
+        BLACK
+    );
 
     terminal.pushSprite(0, 0);
 
@@ -515,6 +540,7 @@ static void terminalInit()
     viewportY = 0;
 
     applicationCursorKeys = false;
+    terminalReverseVideo = false;
 
     ansiState = ANSI_NORMAL;
     ansiPrivate = false;
@@ -539,11 +565,18 @@ static void terminalScroll()
             termBuffer[row + 1],
             TERM_COLS
         );
+
+        memcpy(
+            termReverse[row],
+            termReverse[row + 1],
+            TERM_COLS * sizeof(bool)
+        );
     }
 
     for (int col = 0; col < TERM_COLS; col++)
     {
         termBuffer[TERM_ROWS - 1][col] = ' ';
+        termReverse[TERM_ROWS - 1][col] = false;
     }
 
     cursorY = TERM_ROWS - 1;
@@ -590,6 +623,9 @@ static void terminalPutPrintable(uint8_t ch)
 
     termBuffer[cursorY][cursorX] =
         (char)ch;
+
+    termReverse[cursorY][cursorX] =
+        terminalReverseVideo;
 
     terminalRenderCell(
         cursorX,
@@ -700,6 +736,7 @@ static void terminalClearToEnd()
         )
         {
             termBuffer[row][col] = ' ';
+            termReverse[row][col] = false;
         }
     }
 
@@ -727,6 +764,7 @@ static void terminalClearFromStart()
         )
         {
             termBuffer[row][col] = ' ';
+            termReverse[row][col] = false;
         }
     }
 
@@ -745,6 +783,7 @@ static void terminalEraseLine(int mode)
         )
         {
             termBuffer[cursorY][col] = ' ';
+            termReverse[cursorY][col] = false;
         }
     }
     else if (mode == 1)
@@ -757,6 +796,7 @@ static void terminalEraseLine(int mode)
         )
         {
             termBuffer[cursorY][col] = ' ';
+            termReverse[cursorY][col] = false;
         }
     }
     else if (mode == 2)
@@ -768,6 +808,7 @@ static void terminalEraseLine(int mode)
         )
         {
             termBuffer[cursorY][col] = ' ';
+            termReverse[cursorY][col] = false;
         }
     }
 
@@ -1008,12 +1049,44 @@ static void ansiExecute(uint8_t command)
 
 
         case 'm':
-
+        {
             /*
-             * SGR is accepted for compatibility.
-             * Colour/attribute rendering is not yet modelled.
+             * Minimal SGR support used by CP/M applications and the
+             * Lynx-style browser.  Keep colour handling deliberately
+             * simple while modelling reverse video correctly.
+             *
+             *   0  reset attributes
+             *   7  reverse video on
+             *   27 reverse video off
              */
+            for (
+                int index = 0;
+                index <= ansiParamIndex;
+                index++
+            )
+            {
+                int parameter =
+                    ansiParam[index];
+
+                if (parameter == 0)
+                {
+                    terminalReverseVideo =
+                        false;
+                }
+                else if (parameter == 7)
+                {
+                    terminalReverseVideo =
+                        true;
+                }
+                else if (parameter == 27)
+                {
+                    terminalReverseVideo =
+                        false;
+                }
+            }
+
             break;
+        }
 
 
         default:
@@ -1097,6 +1170,7 @@ static void terminalProcessCharacter(
             viewportY = 0;
 
             applicationCursorKeys = false;
+            terminalReverseVideo = false;
 
             terminalMarkDirty();
 
