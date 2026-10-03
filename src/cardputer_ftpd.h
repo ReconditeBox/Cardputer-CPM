@@ -1461,10 +1461,16 @@ static void ftpHandleStore(
     bool okay =
         true;
 
+    /*
+     * Do not use connected() as the loop condition here.  The sender may
+     * close its TCP side immediately after transmitting the final block,
+     * and WiFiClient can then report disconnected while bytes from that
+     * block are still waiting in the receive buffer.  Drain everything
+     * already received before treating the data connection as complete.
+     */
     while (
         ftpActive &&
-        ftpDataClient &&
-        ftpDataClient.connected()
+        ftpDataClient
     )
     {
         int available =
@@ -1472,6 +1478,11 @@ static void ftpHandleStore(
 
         if (available <= 0)
         {
+            if (!ftpDataClient.connected())
+            {
+                break;
+            }
+
             if (!ftpTransferCanContinue())
             {
                 okay =
