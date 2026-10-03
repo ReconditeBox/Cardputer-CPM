@@ -8956,6 +8956,10 @@ uint16 cardputerWgetBdos(
 }
 
 
+#include "cardputer_ftp_client.h"
+#include "cardputer_browser.h"
+
+
 static bool wifiConnectFromConfig()
 {
     WifiConfigEntry entries[
