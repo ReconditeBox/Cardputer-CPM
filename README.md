@@ -277,7 +277,7 @@ When WiFi connects successfully, the Cardputer starts a Telnet server on TCP por
 A fourth CP/M console-routing command is provided:
 
 ```text
-TELNET.COM
+TELNETD.COM
 ```
 
 This uses the same ESP32-specific BDOS hook as `LOCAL.COM`, `USB.COM`, and `BOTH.COM`.
@@ -295,9 +295,9 @@ To use it:
 
 1. Boot the Cardputer with a valid `WIFI.CFG`.
 2. Note the IP address printed during startup.
-3. Copy `TELNET.COM` to a CP/M drive on the SD card, alongside the other console-switch commands.
+3. Copy `TELNETD.COM` to a CP/M drive on the SD card, alongside the other console-switch commands.
 4. From another machine on the same network, open a Telnet client to the Cardputer IP address on port 23.
-5. At the Cardputer CP/M prompt, run `TELNET`.
+5. At the Cardputer CP/M prompt, run `TELNETD`.
 6. CP/M `CON:` is then routed to the Telnet client.
 
 Only one Telnet client is accepted at a time.
