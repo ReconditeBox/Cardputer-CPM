@@ -28,6 +28,35 @@ struct CardputerBrowserLink
 };
 
 
+/*
+ * Browser session storage lives in static DRAM rather than on the Arduino
+ * loop task stack.  The link table alone is ~24 KB at the current limits,
+ * which is far larger than the task stack and previously caused BROWSE to
+ * reset the ESP32 immediately on entry.
+ */
+static CardputerBrowserLink browserLinks[
+    BROWSER_LINK_MAX
+];
+
+static char browserHistory[
+    BROWSER_HISTORY_MAX
+][
+    BROWSER_URL_MAX
+];
+
+static char browserCurrent[
+    BROWSER_URL_MAX
+];
+
+static char browserCommand[
+    BROWSER_URL_MAX + 16
+];
+
+static char browserResolved[
+    BROWSER_URL_MAX
+];
+
+
 struct CardputerBrowserParser
 {
     const char *baseUrl;
@@ -2082,9 +2111,8 @@ uint16 cardputerBrowserBdos(
         return 0x00FF;
     }
 
-    char current[
-        BROWSER_URL_MAX
-    ];
+    char *current =
+        browserCurrent;
 
     char *initial =
         wifiTrim(
@@ -2095,7 +2123,7 @@ uint16 cardputerBrowserBdos(
     {
         if (
             strlen(initial) >=
-                sizeof(current)
+                BROWSER_URL_MAX
         )
         {
             _puts(
@@ -2115,25 +2143,21 @@ uint16 cardputerBrowserBdos(
         if (!cardputerNetworkReadLine(
             "URL: ",
             current,
-            sizeof(current)
+            BROWSER_URL_MAX
         ))
         {
             return 0;
         }
     }
 
-    CardputerBrowserLink links[
-        BROWSER_LINK_MAX
-    ];
+    CardputerBrowserLink *links =
+        browserLinks;
 
     uint8_t linkCount =
         0;
 
-    char history[
-        BROWSER_HISTORY_MAX
-    ][
-        BROWSER_URL_MAX
-    ];
+    char (*history)[BROWSER_URL_MAX] =
+        browserHistory;
 
     uint8_t historyCount =
         0;
@@ -2141,9 +2165,8 @@ uint16 cardputerBrowserBdos(
     bool needLoad =
         true;
 
-    char command[
-        BROWSER_URL_MAX + 16
-    ];
+    char *command =
+        browserCommand;
 
     while (true)
     {
@@ -2382,16 +2405,15 @@ uint16 cardputerBrowserBdos(
                 continue;
             }
 
-            char resolved[
-                BROWSER_URL_MAX
-            ];
+            char *resolved =
+                browserResolved;
 
             bool okay =
                 browserResolveUrl(
                     current,
                     url,
                     resolved,
-                    sizeof(resolved)
+                    BROWSER_URL_MAX
                 );
 
             if (!okay)
@@ -2411,7 +2433,7 @@ uint16 cardputerBrowserBdos(
                 {
                     if (
                         strlen(url) <
-                            sizeof(resolved)
+                            BROWSER_URL_MAX
                     )
                     {
                         strcpy(
