@@ -194,6 +194,7 @@ void _putch(uint8 ch);
 void _clrscr(void);
 
 static void setCardConsoleMode(uint8_t mode);
+static void telnetResetInputState();
 
 
 /*
