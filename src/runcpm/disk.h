@@ -618,6 +618,12 @@ uint8 _RenameFile(uint16 fcbaddr) {
                 return (result); // Invalid filename
             if (!filename[4])
                 return (result); // Invalid filename
+
+            if (_sys_isreadonly(&filename[0])) {
+                _error(errWRITEPROT);
+                return (result);
+            }
+
             if (_sys_renamefile(&filename[0], &newname[0]))
                 result = 0x00;
         } else {
@@ -781,6 +787,12 @@ uint16 _WriteSeq(uint16 fcbaddr) {
     if (!_SelectDisk(F->dr)) {
         if (!RW) {
             _FCBtoHostname(fcbaddr, &filename[0]);
+
+            if (_sys_isreadonly(&filename[0])) {
+                _error(errWRITEPROT);
+                return (uint16)0x00FF;
+            }
+
             long saved_dma = dmaAddr;
             uint8 savedBank = curBank;
             uint32 savedBankBase = curBankBase;
@@ -934,6 +946,12 @@ uint16 _WriteRand(uint16 fcbaddr) {
     if (!_SelectDisk(F->dr)) {
         if (!RW) {
             _FCBtoHostname(fcbaddr, &filename[0]);
+
+            if (_sys_isreadonly(&filename[0])) {
+                _error(errWRITEPROT);
+                return (uint16)0x00FF;
+            }
+
             long saved_dma = dmaAddr;
             uint8 savedBank = curBank;
             uint32 savedBankBase = curBankBase;
@@ -1005,6 +1023,11 @@ uint8 _TruncateFile(uint16 fcbaddr) {
     if (!_SelectDisk(F->dr)) {
         if (!RW) {
             _FCBtoHostname(fcbaddr, &filename[0]);
+
+            if (_sys_isreadonly(&filename[0])) {
+                return result;
+            }
+
             long records = F->r0 | (F->r1 << 8) | ((long)F->r2 << 16);
             if (!_sys_truncate(&filename[0], records * 128))
                 result = 0x00;
