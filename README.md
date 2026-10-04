@@ -35,7 +35,7 @@ Current functionality includes:
 - current UTC date/time display with `TIME`
 - live ESP32 memory reporting with `MEM`
 - CP/M character devices `LST:`, `RDR:` and `PUN:`
-- EXT-header auxiliary UART at 115200 8N1
+- EXT-header auxiliary UART at 115200 8N1 *(implemented; physical hardware validation pending)*
 - built-in `AUX` routing command
 - built-in `BATTERY` status command
 - persistent CP/M R/O, SYS and archive file attributes
@@ -46,6 +46,26 @@ Current functionality includes:
 - physical **Fn + =** emergency return to LOCAL mode
 
 Standard CP/M utilities such as `DIR`, `STAT` and `PIP` have been tested successfully.
+
+## Tested software
+
+The following software and toolchains have been exercised successfully on Cardputer-CPM:
+
+- **WordStar**
+- **Microsoft MBASIC / BASIC-80**
+- **Hi-Tech C**
+- **Microsoft M80** macro assembler
+- **Microsoft L80 / LINK-80** linker
+- **Microsoft CREF80** cross-reference generator
+- **Microsoft LIB80** library manager
+- standard CP/M utilities including **DIR**, **STAT** and **PIP**
+- CP/M character devices **LST:**, **RDR:** and **PUN:**
+
+The Microsoft development-tool test included assembling relocatable modules with M80, linking multiple modules with L80, generating a CREF80 `.PRN` cross-reference listing, building a searchable library with LIB80, and having L80 successfully extract a required module from that library with `/S`.
+
+The auxiliary UART path is implemented in the firmware and exposed through the `AUX` command, but **physical AUX/RS232 hardware validation is still pending**.
+
+This list records software that has actually been tested; it is not intended to imply that unlisted CP/M software is incompatible.
 
 ---
 
@@ -64,7 +84,7 @@ The SD interface uses:
 | MOSI | 14 |
 | CS | 12 |
 
-The Cardputer Adv EXT header also provides the auxiliary serial interface used by Cardputer-CPM:
+The Cardputer Adv EXT header provides the auxiliary serial interface used by Cardputer-CPM. Firmware support is implemented; physical RS232/AUX hardware validation is pending:
 
 | Signal | GPIO |
 | --- | ---: |
@@ -449,7 +469,7 @@ The file-backed `RDR:` and `PUN:` devices remain the default after boot.
 
 ### AUX UART
 
-The Cardputer Adv EXT header exposes a bidirectional UART:
+The Cardputer Adv EXT header exposes a bidirectional UART. The firmware path and CP/M routing are implemented, but physical operation with the external RS232/AUX hardware has not yet been validated:
 
 ```text
 TX  GPIO13
