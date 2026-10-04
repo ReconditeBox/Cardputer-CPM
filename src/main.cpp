@@ -9497,15 +9497,22 @@ void setup()
 
 
     /*
+     * Show the CP/M/CCP banner once at cold start.
+     *
+     * Warm boots are routine CP/M behaviour (BDOS 0, JP 0000h, BIOS
+     * WBOOT, etc.).  Reprinting the banner for every warm boot makes a
+     * normal program exit look like a machine restart.
+     */
+    _puts(
+        CCPHEAD
+    );
+
+
+    /*
      * Main CP/M loop.
      */
     while (true)
     {
-        _puts(
-            CCPHEAD
-        );
-
-
         _PatchCPM();
 
 
